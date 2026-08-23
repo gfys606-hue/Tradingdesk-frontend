@@ -1,0 +1,545 @@
+import React, { useState, useEffect, useCallback, useRef } from "react";
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
+import { TrendingUp, TrendingDown, Radar, ChevronRight, AlertTriangle, Wallet, History, Zap, Settings, RefreshCw, X } from "lucide-react";
+
+const CONVICTION_BUY = 72;
+const CONVICTION_SELL = 30;
+const TOTAL_START = 2000; // $1000 stocks + $1000 crypto, seeded by the backend on migrate
+const BACKEND_URL_KEY = "desk-backend-url";
+const POLL_MS = 30000; // pick up server-side cron trades without a manual refresh
+
+// ---------- backend calls ----------
+function normalizeUrl(u) {
+  return u.trim().replace(/\/+$/, "");
+}
+
+async function fetchState(backendUrl) {
+  const res = await fetch(`${backendUrl}/api/desk/state`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Backend returned ${res.status}${body ? `: ${body.slice(0, 150)}` : ""}`);
+  }
+  const data = await res.json();
+  const s = data.state || {};
+
+  const candidates = (data.candidates || [])
+    .map((c) => ({
+      ticker: c.ticker,
+      name: c.name,
+      sector: c.sector,
+      cls: c.cls,
+      price: Number(c.price),
+      confidence: Math.round(c.confidence),
+      supplierNote: c.supplier_note || "No supply-chain note returned.",
+      riskNote: c.risk_note || "No risk note returned.",
+    }))
+    .sort((a, b) => b.confidence - a.confidence);
+
+  const holdings = {};
+  (data.holdings || []).forEach((h) => {
+    holdings[h.ticker] = {
+      qty: Number(h.shares),
+      avgCost: Number(h.avg_price),
+      cls: h.cls,
+      name: h.name,
+    };
+  });
+
+  const prices = {};
+  candidates.forEach((c) => (prices[c.ticker] = c.price));
+
+  const trades = (data.trades || []).map((t) => ({
+    day: t.day_count,
+    action: (t.action || "").toUpperCase(),
+    ticker: t.ticker,
+    qty: Number(t.shares),
+    price: Number(t.price),
+    confidence: t.confidence,
+    cls: t.cls,
+  }));
+
+  const history = (data.history || []).map((h) => ({
+    day: h.day_count,
+    value: Number(h.total_value),
+  }));
+
+  return {
+    day: s.day_count || 0,
+    cash: { stocks: Number(s.cash_stocks || 0), crypto: Number(s.cash_crypto || 0) },
+    holdings,
+    prices,
+    candidates,
+    trades,
+    history,
+    updatedAt: s.updated_at || null,
+  };
+}
+
+async function triggerScan(backendUrl) {
+  const res = await fetch(`${backendUrl}/api/desk/scan`, { method: "POST" });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Scan failed (${res.status})`);
+  }
+  return res.json();
+}
+
+function pct(n) {
+  return `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
+}
+function usd(n) {
+  return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: n < 5 ? 4 : 2 });
+}
+
+const fontDisplay = "'Fraunces', Georgia, serif";
+const fontMono = "'IBM Plex Mono', 'SF Mono', monospace";
+const fontUtil = "'Inter', system-ui, sans-serif";
+
+const amber = "#E8A33D";
+const mint = "#4FAE8C";
+const red = "#C4453B";
+const ink = "#0B1220";
+const panel = "#121B2E";
+const panel2 = "#182238";
+const paper = "#EDE6D6";
+const dim = "#8A93A6";
+
+export default function TradingDesk() {
+  const [backendUrl, setBackendUrl] = useState(null);
+  const [urlChecked, setUrlChecked] = useState(false);
+  const [urlInput, setUrlInput] = useState("");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  const [state, setState] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [tab, setTab] = useState("scan");
+  const [scanError, setScanError] = useState(null);
+  const [connError, setConnError] = useState(null);
+  const pollRef = useRef(null);
+
+  // load saved backend URL once on mount
+  useEffect(() => {
+    (async () => {
+      try {
+        const stored = window.localStorage.getItem(BACKEND_URL_KEY);
+        if (stored) {
+          setBackendUrl(stored);
+          setUrlInput(stored);
+        }
+      } catch (e) {
+        // no saved URL yet — that's fine
+      }
+      setUrlChecked(true);
+    })();
+  }, []);
+
+  const loadState = useCallback(async (url) => {
+    setLoading(true);
+    setConnError(null);
+    try {
+      const next = await fetchState(url);
+      setState(next);
+    } catch (e) {
+      setConnError(e.message || "Could not reach backend");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  // once we have a backend URL, load state + start polling
+  useEffect(() => {
+    if (!backendUrl) return;
+    loadState(backendUrl);
+    pollRef.current = setInterval(() => loadState(backendUrl), POLL_MS);
+    return () => clearInterval(pollRef.current);
+  }, [backendUrl, loadState]);
+
+  const saveBackendUrl = async (raw) => {
+    const url = normalizeUrl(raw);
+    if (!url) return;
+    try {
+      window.localStorage.setItem(BACKEND_URL_KEY, url);
+    } catch (e) {
+      console.error("could not save backend url", e);
+    }
+    setBackendUrl(url);
+    setSettingsOpen(false);
+  };
+
+  const runScan = async () => {
+    if (!backendUrl || running) return;
+    setRunning(true);
+    setScanError(null);
+    try {
+      await triggerScan(backendUrl);
+      await loadState(backendUrl);
+    } catch (e) {
+      setScanError(e.message || "Scan failed");
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  const portfolioValue = (s) => {
+    let v = s.cash.stocks + s.cash.crypto;
+    Object.entries(s.holdings).forEach(([t, h]) => {
+      const price = s.prices[t] || h.avgCost;
+      v += h.qty * price;
+    });
+    return v;
+  };
+
+  // ---------- setup screen: no backend URL saved yet ----------
+  if (!urlChecked) {
+    return <LoadingScreen label="loading desk…" />;
+  }
+  if (!backendUrl || settingsOpen) {
+    return (
+      <SetupScreen
+        urlInput={urlInput}
+        setUrlInput={setUrlInput}
+        onSave={saveBackendUrl}
+        onCancel={backendUrl ? () => setSettingsOpen(false) : null}
+      />
+    );
+  }
+
+  if (connError && !state) {
+    return (
+      <div style={{ minHeight: "100vh", background: ink, color: paper, fontFamily: fontUtil, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ maxWidth: 340, textAlign: "center" }}>
+          <div style={{ fontFamily: fontDisplay, fontSize: 20, color: amber, marginBottom: 8 }}>Can't reach the desk.</div>
+          <div style={{ fontSize: 13, color: dim, marginBottom: 16, lineHeight: 1.5 }}>{connError}</div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+            <button onClick={() => loadState(backendUrl)} style={btnStyle(amber, ink)}>
+              <RefreshCw size={13} /> Retry
+            </button>
+            <button onClick={() => setSettingsOpen(true)} style={btnStyle("transparent", dim, `1px solid #26314A`)}>
+              <Settings size={13} /> Backend URL
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (loading && !state) {
+    return <LoadingScreen label="loading desk…" />;
+  }
+  if (!state) return null;
+
+  const totalValue = portfolioValue(state);
+  const totalChange = (totalValue - TOTAL_START) / TOTAL_START;
+  const holdingsList = Object.entries(state.holdings).map(([t, h]) => {
+    const price = state.prices[t] || h.avgCost;
+    return { t, ...h, price, pl: (price - h.avgCost) / h.avgCost, val: h.qty * price };
+  });
+
+  const Dial = ({ score, size = 44 }) => {
+    const color = score >= CONVICTION_BUY ? mint : score < CONVICTION_SELL ? red : amber;
+    return (
+      <div style={{ position: "relative", width: size, height: size, flexShrink: 0 }}>
+        <svg width={size} height={size} viewBox="0 0 44 44">
+          <circle cx="22" cy="22" r="19" fill="none" stroke="#26314A" strokeWidth="3" />
+          <circle
+            cx="22" cy="22" r="19" fill="none" stroke={color} strokeWidth="3"
+            strokeDasharray={`${(score / 100) * 119} 119`}
+            strokeLinecap="round" transform="rotate(-90 22 22)"
+          />
+          <text x="22" y="26" textAnchor="middle" fontSize="12" fontFamily={fontMono} fill={paper} fontWeight="600">
+            {score}
+          </text>
+        </svg>
+      </div>
+    );
+  };
+
+  const TabBtn = ({ id, label, icon: Icon }) => (
+    <button
+      onClick={() => setTab(id)}
+      style={{
+        display: "flex", alignItems: "center", gap: 6, padding: "9px 14px",
+        background: tab === id ? panel2 : "transparent",
+        color: tab === id ? amber : dim,
+        border: "none", borderBottom: tab === id ? `2px solid ${amber}` : "2px solid transparent",
+        fontFamily: fontUtil, fontSize: 13, fontWeight: 600, cursor: "pointer", letterSpacing: 0.2,
+      }}
+    >
+      <Icon size={14} /> {label}
+    </button>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: ink, color: paper, fontFamily: fontUtil }}>
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+        * { box-sizing: border-box; }
+        body { margin: 0; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-thumb { background: #26314A; border-radius: 4px; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .spin { animation: spin 0.8s linear infinite; }
+      `}</style>
+
+      {/* header */}
+      <div style={{ padding: "20px 16px 14px", borderBottom: `1px solid #1E293D` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <div>
+            <div style={{ fontFamily: fontMono, fontSize: 11, color: amber, letterSpacing: 1.5, textTransform: "uppercase" }}>
+              Paper Desk · Day {state.day}
+            </div>
+            <div style={{ fontFamily: fontDisplay, fontSize: 26, fontWeight: 700, marginTop: 2 }}>
+              {usd(totalValue)}
+            </div>
+            <div style={{ fontFamily: fontMono, fontSize: 13, color: totalChange >= 0 ? mint : red, display: "flex", alignItems: "center", gap: 4 }}>
+              {totalChange >= 0 ? <TrendingUp size={13} /> : <TrendingDown size={13} />}
+              {pct(totalChange)} since inception
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <button
+              onClick={() => loadState(backendUrl)}
+              title="Refresh"
+              style={{
+                background: "transparent", border: `1px solid #26314A`, borderRadius: 8,
+                width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center",
+                color: dim, cursor: "pointer",
+              }}
+            >
+              <RefreshCw size={14} className={loading ? "spin" : ""} />
+            </button>
+            <button
+              onClick={() => setSettingsOpen(true)}
+              title="Backend settings"
+              style={{
+                background: "transparent", border: `1px solid #26314A`, borderRadius: 8,
+                width: 34, height: 34, display: "flex", alignItems: "center", justifyContent: "center",
+                color: dim, cursor: "pointer",
+              }}
+            >
+              <Settings size={14} />
+            </button>
+            <button
+              onClick={runScan}
+              disabled={running}
+              style={{
+                background: amber, color: ink, border: "none", borderRadius: 8,
+                padding: "10px 14px", fontFamily: fontUtil, fontWeight: 700, fontSize: 13,
+                display: "flex", alignItems: "center", gap: 6, cursor: running ? "default" : "pointer",
+                opacity: running ? 0.6 : 1, whiteSpace: "nowrap",
+              }}
+            >
+              <Zap size={14} /> {running ? "Scanning…" : "Run Scan"}
+            </button>
+          </div>
+        </div>
+
+        {scanError && (
+          <div style={{ marginTop: 10, background: "rgba(196,69,59,0.12)", border: "1px solid rgba(196,69,59,0.4)", borderRadius: 8, padding: "8px 10px", fontFamily: fontMono, fontSize: 12, color: red }}>
+            Scan failed: {scanError}
+          </div>
+        )}
+        {connError && state && (
+          <div style={{ marginTop: 10, background: "rgba(196,69,59,0.12)", border: "1px solid rgba(196,69,59,0.4)", borderRadius: 8, padding: "8px 10px", fontFamily: fontMono, fontSize: 12, color: red }}>
+            Last refresh failed: {connError} — showing cached data.
+          </div>
+        )}
+
+        {/* chart */}
+        {state.history.length > 1 && (
+          <div style={{ height: 70, marginTop: 14 }}>
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={state.history}>
+                <Line type="monotone" dataKey="value" stroke={amber} strokeWidth={2} dot={false} />
+                <XAxis dataKey="day" hide />
+                <YAxis hide domain={["dataMin - 20", "dataMax + 20"]} />
+                <Tooltip
+                  contentStyle={{ background: panel2, border: `1px solid #26314A`, borderRadius: 6, fontFamily: fontMono, fontSize: 12 }}
+                  labelFormatter={(d) => `Day ${d}`}
+                  formatter={(v) => [usd(v), "Value"]}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </div>
+
+      {/* tabs */}
+      <div style={{ display: "flex", borderBottom: `1px solid #1E293D`, position: "sticky", top: 0, background: ink, zIndex: 10 }}>
+        <TabBtn id="scan" label="Scan" icon={Radar} />
+        <TabBtn id="holdings" label="Holdings" icon={Wallet} />
+        <TabBtn id="log" label="Trade Log" icon={History} />
+      </div>
+
+      <div style={{ padding: 14, paddingBottom: 40 }}>
+        {tab === "scan" && (
+          <>
+            {state.candidates.length === 0 ? (
+              <EmptyState label="Run a scan to generate today's candidates." />
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ fontFamily: fontMono, fontSize: 11, color: dim, marginBottom: 2, letterSpacing: 0.5 }}>
+                  BUY ≥ {CONVICTION_BUY} · SELL &lt; {CONVICTION_SELL} · auto-scans daily at 9:35am server time
+                </div>
+                {state.candidates.map((c) => (
+                  <div key={c.ticker} style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D" }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <Dial score={c.confidence} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                          <span style={{ fontFamily: fontMono, fontWeight: 600, fontSize: 14 }}>{c.ticker}</span>
+                          <span style={{ fontFamily: fontMono, fontSize: 13, color: dim }}>{usd(c.price)}</span>
+                        </div>
+                        <div style={{ fontSize: 12, color: dim }}>{c.name} · {c.sector} · {c.cls === "stocks" ? "Equity" : "Crypto"}</div>
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 4 }}>
+                      <Note icon={<AlertTriangle size={11} />} text={c.supplierNote} />
+                      <Note icon={<ChevronRight size={11} />} text={c.riskNote} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
+        {tab === "holdings" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10 }}>
+              <CashCard label="Stocks cash" value={state.cash.stocks} />
+              <CashCard label="Crypto cash" value={state.cash.crypto} />
+            </div>
+            {holdingsList.length === 0 ? (
+              <EmptyState label="No open positions yet." />
+            ) : (
+              holdingsList.map((h) => (
+                <div key={h.t} style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontFamily: fontMono, fontWeight: 600, fontSize: 14 }}>{h.t}</div>
+                    <div style={{ fontSize: 12, color: dim }}>{h.qty.toFixed(h.cls === "crypto" ? 4 : 2)} sh @ {usd(h.avgCost)}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontFamily: fontMono, fontSize: 14 }}>{usd(h.val)}</div>
+                    <div style={{ fontFamily: fontMono, fontSize: 12, color: h.pl >= 0 ? mint : red }}>{pct(h.pl)}</div>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+
+        {tab === "log" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {state.trades.length === 0 ? (
+              <EmptyState label="No trades yet. Run a scan to let the desk act." />
+            ) : (
+              state.trades.map((t, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: panel, borderRadius: 8, padding: "9px 12px", border: "1px solid #1E293D" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{
+                      fontFamily: fontMono, fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+                      background: t.action === "BUY" ? "rgba(79,174,140,0.15)" : "rgba(196,69,59,0.15)",
+                      color: t.action === "BUY" ? mint : red,
+                    }}>{t.action}</span>
+                    <span style={{ fontFamily: fontMono, fontSize: 13 }}>{t.ticker}</span>
+                    <span style={{ fontSize: 11, color: dim }}>day {t.day}</span>
+                  </div>
+                  <div style={{ fontFamily: fontMono, fontSize: 12, color: dim }}>{usd(t.qty * t.price)} @ {t.confidence}</div>
+                </div>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function btnStyle(bg, color, border) {
+  return {
+    background: bg, color, border: border || "none", borderRadius: 8,
+    padding: "9px 14px", fontFamily: fontUtil, fontWeight: 700, fontSize: 13,
+    display: "flex", alignItems: "center", gap: 6, cursor: "pointer",
+  };
+}
+
+function LoadingScreen({ label }) {
+  return (
+    <div style={{ minHeight: "100vh", background: ink, display: "flex", alignItems: "center", justifyContent: "center", color: paper, fontFamily: fontMono }}>
+      {label}
+    </div>
+  );
+}
+
+function SetupScreen({ urlInput, setUrlInput, onSave, onCancel }) {
+  return (
+    <div style={{ minHeight: "100vh", background: ink, color: paper, fontFamily: fontUtil, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+      <div style={{ maxWidth: 380, width: "100%", background: panel, border: "1px solid #1E293D", borderRadius: 12, padding: 22, position: "relative" }}>
+        {onCancel && (
+          <button onClick={onCancel} style={{ position: "absolute", top: 14, right: 14, background: "transparent", border: "none", color: dim, cursor: "pointer" }}>
+            <X size={16} />
+          </button>
+        )}
+        <div style={{ fontFamily: fontMono, fontSize: 11, color: amber, letterSpacing: 1.5, textTransform: "uppercase" }}>
+          Paper Desk
+        </div>
+        <div style={{ fontFamily: fontDisplay, fontSize: 20, fontWeight: 700, marginTop: 4, marginBottom: 10 }}>
+          Connect your backend
+        </div>
+        <div style={{ fontSize: 13, color: dim, lineHeight: 1.5, marginBottom: 14 }}>
+          Paste the URL of your Render web service (no trailing slash needed) — e.g. https://trading-desk.onrender.com
+        </div>
+        <input
+          value={urlInput}
+          onChange={(e) => setUrlInput(e.target.value)}
+          placeholder="https://your-service.onrender.com"
+          style={{
+            width: "100%", background: panel2, border: "1px solid #26314A", borderRadius: 8,
+            padding: "10px 12px", color: paper, fontFamily: fontMono, fontSize: 13, marginBottom: 12,
+          }}
+        />
+        <button
+          onClick={() => onSave(urlInput)}
+          disabled={!urlInput.trim()}
+          style={{
+            width: "100%", background: amber, color: ink, border: "none", borderRadius: 8,
+            padding: "11px 14px", fontFamily: fontUtil, fontWeight: 700, fontSize: 13,
+            cursor: urlInput.trim() ? "pointer" : "default", opacity: urlInput.trim() ? 1 : 0.5,
+          }}
+        >
+          Connect
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function Note({ icon, text }) {
+  return (
+    <div style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, color: dim, fontFamily: fontUtil, lineHeight: 1.4 }}>
+      <span style={{ marginTop: 2 }}>{icon}</span>
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function CashCard({ label, value }) {
+  return (
+    <div style={{ flex: 1, background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D" }}>
+      <div style={{ fontSize: 11, color: dim, fontFamily: fontUtil }}>{label}</div>
+      <div style={{ fontFamily: fontMono, fontSize: 16, marginTop: 2 }}>{usd(value)}</div>
+    </div>
+  );
+}
+
+function EmptyState({ label }) {
+  return (
+    <div style={{ textAlign: "center", padding: "40px 20px", color: dim }}>
+      <div style={{ fontFamily: fontDisplay, fontSize: 18, color: amber, marginBottom: 6 }}>Desk is quiet.</div>
+      <div style={{ fontFamily: fontUtil, fontSize: 13 }}>{label}</div>
+    </div>
+  );
+}
