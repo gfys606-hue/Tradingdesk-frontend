@@ -46,7 +46,11 @@ async function fetchState(backendUrl) {
   });
 
   const prices = {};
-  candidates.forEach((c) => (prices[c.ticker] = c.price));
+  const targets = {};
+  candidates.forEach((c) => {
+    prices[c.ticker] = c.price;
+    targets[c.ticker] = c.target_price != null ? Number(c.target_price) : null;
+  });
 
   const trades = (data.trades || []).map((t) => ({
     day: t.day_count,
@@ -68,6 +72,7 @@ async function fetchState(backendUrl) {
     cash: { stocks: Number(s.cash_stocks || 0), crypto: Number(s.cash_crypto || 0) },
     holdings,
     prices,
+    targets,
     candidates,
     trades,
     history,
@@ -231,9 +236,19 @@ export default function TradingDesk() {
 
   const totalValue = portfolioValue(state);
   const totalChange = (totalValue - TOTAL_START) / TOTAL_START;
+  const candidateByTicker = {};
+  (state.candidates || []).forEach((c) => (candidateByTicker[c.ticker] = c));
   const holdingsList = Object.entries(state.holdings).map(([t, h]) => {
     const price = state.prices[t] || h.avgCost;
-    return { t, ...h, price, pl: (price - h.avgCost) / h.avgCost, val: h.qty * price };
+    const cand = candidateByTicker[t];
+    const confidence = cand ? Math.round(cand.confidence) : null;
+    const targetPrice = state.targets && state.targets[t] != null ? state.targets[t] : null;
+    let signal = "HOLD";
+    if (confidence != null) {
+      if (confidence >= CONVICTION_BUY) signal = "BUY";
+      else if (confidence < CONVICTION_SELL) signal = "SELL";
+    }
+    return { t, ...h, price, pl: (price - h.avgCost) / h.avgCost, val: h.qty * price, confidence, targetPrice, signal };
   });
 
   const Dial = ({ score, size = 44 }) => {
@@ -415,18 +430,30 @@ export default function TradingDesk() {
             {holdingsList.length === 0 ? (
               <EmptyState label="No open positions yet." />
             ) : (
-              holdingsList.map((h) => (
+              holdingsList.map((h) => {
+                const signalColor = h.signal === "BUY" ? mint : h.signal === "SELL" ? red : dim;
+                return (
                 <div key={h.t} style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                   <div>
                     <div style={{ fontFamily: fontMono, fontWeight: 600, fontSize: 14 }}>{h.t}</div>
                     <div style={{ fontSize: 12, color: dim }}>{h.qty.toFixed(h.cls === "crypto" ? 4 : 2)} sh @ {usd(h.avgCost)}</div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4 }}>
+                      <span style={{
+                        fontFamily: fontMono, fontSize: 10, fontWeight: 700, padding: "2px 6px", borderRadius: 4,
+                        background: `${signalColor}22`, color: signalColor,
+                      }}>{h.signal}</span>
+                      {h.targetPrice != null && (
+                        <span style={{ fontSize: 11, color: dim }}>target {usd(h.targetPrice)}</span>
+                      )}
+                    </div>
                   </div>
                   <div style={{ textAlign: "right" }}>
                     <div style={{ fontFamily: fontMono, fontSize: 14 }}>{usd(h.val)}</div>
                     <div style={{ fontFamily: fontMono, fontSize: 12, color: h.pl >= 0 ? mint : red }}>{pct(h.pl)}</div>
                   </div>
                 </div>
-              ))
+                );
+              })
             )}
           </div>
         )}
