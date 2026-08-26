@@ -143,6 +143,10 @@ const [scanError, setScanError] = useState(null);
 const [connError, setConnError] = useState(null);
 const pollRef = useRef(null);
 
+// live price chart: which ticker is selected, and its accumulated points
+const [chartTicker, setChartTicker] = useState(null);
+const [chartData, setChartData] = useState([]);
+
 // load saved backend URL once on mount
 useEffect(() => {
 (async () => {
@@ -214,6 +218,62 @@ v += h.qty * price;
 });
 return v;
 };
+
+// Live chart's ticker universe: whatever's currently open, plus whatever the
+// daily scan rates buy-eligible - the same set the intraday engine can trade.
+// Computed unconditionally (state may still be null) so it can sit above the
+// early-return guards, next to the effect that depends on it.
+const eligibleForChart = state ? (state.candidates || []).filter((c) => Math.round(c.confidence) >= CONVICTION_BUY) : [];
+const openTickersForChart = state ? (state.intradayPositions || []).map((p) => p.ticker) : [];
+const chartableTickers = [...new Set([...openTickersForChart, ...eligibleForChart.map((c) => c.ticker)])];
+const activeChartTicker = chartTicker && chartableTickers.includes(chartTicker) ? chartTicker : chartableTickers[0] || null;
+const chartTickerCls = (() => {
+const openMatch = state && (state.intradayPositions || []).find((p) => p.ticker === activeChartTicker);
+if (openMatch) return openMatch.cls;
+const candMatch = eligibleForChart.find((c) => c.ticker === activeChartTicker);
+return candMatch ? candMatch.cls : "crypto";
+})();
+
+// Seeds from recent price_ticks history, then polls a fresh quote every 8s
+// while the Intraday tab is open - independent of the 30s full-state poll,
+// so the chart visibly moves instead of only updating on the slow cycle.
+useEffect(() => {
+if (!backendUrl || tab !== "intraday" || !activeChartTicker) return;
+let cancelled = false;
+setChartData([]);
+const ticker = activeChartTicker;
+const cls = chartTickerCls;
+
+(async () => {
+try {
+const res = await fetch(`${backendUrl}/api/desk/price-history/${ticker}`);
+if (!res.ok || cancelled) return;
+const data = await res.json();
+if (cancelled) return;
+setChartData((data.ticks || []).map((t) => ({ time: new Date(t.recorded_at).getTime(), price: Number(t.price) })));
+} catch (e) {
+// history fetch failed - the chart just seeds empty and fills in live
+}
+})();
+
+const poll = async () => {
+try {
+const res = await fetch(`${backendUrl}/api/desk/quote/${ticker}?cls=${cls}`);
+if (!res.ok || cancelled) return;
+const data = await res.json();
+if (cancelled || data.price == null) return;
+setChartData((prev) => [...prev, { time: Date.now(), price: Number(data.price) }].slice(-150));
+} catch (e) {
+// transient - next tick retries
+}
+};
+const id = setInterval(poll, 8000);
+
+return () => {
+cancelled = true;
+clearInterval(id);
+};
+}, [backendUrl, tab, activeChartTicker, chartTickerCls]);
 
 // ---------- setup screen: no backend URL saved yet ----------
 if (!urlChecked) {
@@ -325,6 +385,8 @@ body { margin: 0; }
 ::-webkit-scrollbar-thumb { background: #26314A; border-radius: 4px; }
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 .spin { animation: spin 0.8s linear infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.pulse { animation: pulse 1.4s ease-in-out infinite; }
 `}</style>
 
 {/* header */}
@@ -498,6 +560,58 @@ background: `${signalColor}22`, color: signalColor,
 <div style={{ fontFamily: fontMono, fontSize: 11, color: dim, marginBottom: 2, letterSpacing: 0.5 }}>
 $50/trade · auto-closes at +0.4% / -0.4% · only trades tickers the daily scan rates ≥ {CONVICTION_BUY} · checks every 2 min
 </div>
+{chartableTickers.length > 0 && (
+<div style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D" }}>
+<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+{chartableTickers.map((t) => (
+<button
+key={t}
+onClick={() => setChartTicker(t)}
+style={{
+fontFamily: fontMono, fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6,
+border: `1px solid ${t === activeChartTicker ? amber : "#26314A"}`,
+background: t === activeChartTicker ? `${amber}22` : "transparent",
+color: t === activeChartTicker ? amber : dim, cursor: "pointer",
+}}
+>
+{t}
+</button>
+))}
+</div>
+<div style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: fontMono, fontSize: 10, color: mint, letterSpacing: 0.5 }}>
+<span className="pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: mint, display: "inline-block" }} />
+LIVE
+</div>
+</div>
+{chartData.length > 1 ? (
+<>
+<div style={{ height: 130 }}>
+<ResponsiveContainer width="100%" height="100%">
+<LineChart data={chartData}>
+<Line type="monotone" dataKey="price" stroke={mint} strokeWidth={2} dot={false} isAnimationActive={false} />
+<XAxis dataKey="time" hide />
+<YAxis hide domain={["dataMin", "dataMax"]} />
+<Tooltip
+contentStyle={{ background: panel2, border: `1px solid #26314A`, borderRadius: 6, fontFamily: fontMono, fontSize: 12 }}
+labelFormatter={(t) => new Date(t).toLocaleTimeString()}
+formatter={(v) => [usd(v), activeChartTicker]}
+/>
+</LineChart>
+</ResponsiveContainer>
+</div>
+<div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
+<div style={{ fontFamily: fontMono, fontSize: 11, color: dim }}>{activeChartTicker}</div>
+<div style={{ fontFamily: fontMono, fontSize: 13 }}>{usd(chartData[chartData.length - 1].price)}</div>
+</div>
+</>
+) : (
+<div style={{ padding: "20px 0", textAlign: "center", color: dim, fontSize: 12, fontFamily: fontUtil }}>
+Gathering live price history for {activeChartTicker}…
+</div>
+)}
+</div>
+)}
 <div style={{ display: "flex", gap: 10 }}>
 <CashCard label="Intraday stocks cash" value={state.intradayCash.stocks} />
 <CashCard label="Intraday crypto cash" value={state.intradayCash.crypto} />
