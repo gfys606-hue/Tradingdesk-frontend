@@ -372,7 +372,8 @@ const intradayValue = state.intradayCash.stocks + state.intradayCash.crypto +
 intradayList.reduce((sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice), 0);
 const intradayChange = (intradayValue - 200) / 200;
 
-const intradayTradeMarkers = (state.trades || [])
+const candles = buildCandles(chartData, 40);
+  const intradayTradeMarkers = (state.trades || [])
   .filter((t) => t.ticker === activeChartTicker && t.reason && t.reason.startsWith("intraday") && t.createdAt)
   .map((t) => ({
     time: new Date(t.createdAt).getTime(),
@@ -544,7 +545,8 @@ LIVE
   <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} tick={{ fontSize: 9, fill: dim, fontFamily: fontMono }} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "#26314A" }} tickLine={false} />
   <YAxis hide domain={["dataMin", "dataMax"]} />
   <Tooltip content={<CandleTooltip />} />
-  <Line type="monotone" dataKey="price" stroke={mint} strokeWidth={2} dot={false} isAnimationActive={false} />
+  <Bar data={candles} dataKey={(d) => [d.low, d.high]} shape={Candle} barSize={5} isAnimationActive={false} />
+          <Line type="monotone" dataKey="price" stroke={mint} strokeWidth={2} dot={false} isAnimationActive={false} />
   {intradayTradeMarkers.length > 0 && (
     <Scatter data={intradayTradeMarkers} dataKey="price" shape={TradeMarker} isAnimationActive={false} />
   )}
