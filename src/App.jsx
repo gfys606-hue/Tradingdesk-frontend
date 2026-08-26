@@ -372,7 +372,7 @@ const intradayValue = state.intradayCash.stocks + state.intradayCash.crypto +
 intradayList.reduce((sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice), 0);
 const intradayChange = (intradayValue - 200) / 200;
 
-const candles = buildCandles(chartData, 40);
+const candles = buildCandles(chartData, 20);
   const intradayTradeMarkers = (state.trades || [])
   .filter((t) => t.ticker === activeChartTicker && t.reason && t.reason.startsWith("intraday") && t.createdAt)
   .map((t) => ({
@@ -800,12 +800,12 @@ const top = Math.max(open, close);
 const bottom = Math.min(open, close);
 const bodyTop = y + ((high - top) / range) * height;
 const bodyBottom = y + ((high - bottom) / range) * height;
-const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+const bodyHeight = Math.max(3, bodyBottom - bodyTop);
 const cx = x + width / 2;
-const bodyWidth = Math.max(2, width * 0.6);
+const bodyWidth = Math.max(4, width * 0.6);
 return (
 <g>
-<line x1={cx} x2={cx} y1={y} y2={y + height} stroke={color} strokeWidth={1} />
+<line x1={cx} x2={cx} y1={y} y2={y + height} stroke={color} strokeWidth={2} />
 <rect x={cx - bodyWidth / 2} y={bodyTop} width={bodyWidth} height={bodyHeight} fill={color} />
 </g>
 );
