@@ -253,14 +253,16 @@ return v;
 // daily scan rates buy-eligible - the same set the intraday engine can trade.
 // Computed unconditionally (state may still be null) so it can sit above the
 // early-return guards, next to the effect that depends on it.
-const eligibleForChart = state ? (state.candidates || []).filter((c) => Math.round(c.confidence) >= CONVICTION_BUY) : [];
+const bestStock = state ? (state.candidates || []).filter((c) => c.cls === "stocks").sort((a, b) => b.confidence - a.confidence)[0] : null;
+const bestCrypto = state ? (state.candidates || []).filter((c) => c.cls === "crypto").sort((a, b) => b.confidence - a.confidence)[0] : null;
 const openTickersForChart = state ? (state.intradayPositions || []).map((p) => p.ticker) : [];
-const chartableTickers = [...new Set([...openTickersForChart, ...eligibleForChart.map((c) => c.ticker)])];
+const bestTickers = [bestStock, bestCrypto].filter(Boolean).map((c) => c.ticker);
+const chartableTickers = [...new Set([...openTickersForChart, ...bestTickers])];
 const activeChartTicker = chartTicker && chartableTickers.includes(chartTicker) ? chartTicker : chartableTickers[0] || null;
 const chartTickerCls = (() => {
 const openMatch = state && (state.intradayPositions || []).find((p) => p.ticker === activeChartTicker);
 if (openMatch) return openMatch.cls;
-const candMatch = eligibleForChart.find((c) => c.ticker === activeChartTicker);
+const candMatch = state && (state.candidates || []).find((c) => c.ticker === activeChartTicker);
 return candMatch ? candMatch.cls : "crypto";
 })();
 
