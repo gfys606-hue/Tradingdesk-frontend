@@ -668,7 +668,7 @@ background: `${signalColor}22`, color: signalColor,
 {tab === "intraday" && (
 <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
 <div style={{ fontFamily: fontMono, fontSize: 11, color: dim, marginBottom: 2, letterSpacing: 0.5 }}>
-$50/trade · auto-closes at +0.4% / -0.4% · only trades tickers the daily scan rates ≥ {CONVICTION_BUY} · checks every 2 min
+$50/trade · stop-loss at -4%, wins run uncapped past +4% until they pull back · only trades tickers the daily scan rates ≥ {CONVICTION_BUY} · checks every 2 min
 </div>
 <div style={{ display: "flex", gap: 10 }}>
 <CashCard label="Intraday stocks cash" value={state.intradayCash.stocks} />
