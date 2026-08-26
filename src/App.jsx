@@ -268,7 +268,7 @@ return candMatch ? candMatch.cls : "crypto";
 // while the Intraday tab is open - independent of the 30s full-state poll,
 // so the chart visibly moves instead of only updating on the slow cycle.
 useEffect(() => {
-if (!backendUrl || tab !== "intraday" || !activeChartTicker) return;
+if (!backendUrl || !activeChartTicker) return;
 let cancelled = false;
 setChartData([]);
 const ticker = activeChartTicker;
@@ -303,7 +303,7 @@ return () => {
 cancelled = true;
 clearInterval(id);
 };
-}, [backendUrl, tab, activeChartTicker, chartTickerCls]);
+}, [backendUrl, activeChartTicker, chartTickerCls]);
 
 // ---------- setup screen: no backend URL saved yet ----------
 if (!urlChecked) {
@@ -512,6 +512,66 @@ formatter={(v) => [usd(v), "Value"]}
 </ResponsiveContainer>
 </div>
 )}
+
+{chartableTickers.length > 0 && (
+<div style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D", marginTop: 14 }}>
+<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
+<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+{chartableTickers.map((t) => (
+<button
+key={t}
+onClick={() => setChartTicker(t)}
+style={{
+fontFamily: fontMono, fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6,
+border: `1px solid ${t === activeChartTicker ? amber : "#26314A"}`,
+background: t === activeChartTicker ? `${amber}22` : "transparent",
+color: t === activeChartTicker ? amber : dim, cursor: "pointer",
+}}
+>
+{t}
+</button>
+))}
+</div>
+<div style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: fontMono, fontSize: 10, color: mint, letterSpacing: 0.5 }}>
+<span className="pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: mint, display: "inline-block" }} />
+LIVE
+</div>
+</div>
+{chartData.length > 1 ? (
+<>
+<div style={{ height: 170 }}>
+<ResponsiveContainer width="100%" height="100%">
+<ComposedChart data={candles} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
+<XAxis dataKey="time" tick={{ fontSize: 9, fill: dim, fontFamily: fontMono }} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "#26314A" }} tickLine={false} />
+<YAxis hide domain={["dataMin", "dataMax"]} />
+<Tooltip content={<CandleTooltip />} />
+<Bar dataKey={(d) => [d.low, d.high]} shape={Candle} isAnimationActive={false} />
+{intradayTradeMarkers.length > 0 && (
+<Scatter data={intradayTradeMarkers} dataKey="price" shape={TradeMarker} isAnimationActive={false} />
+)}
+</ComposedChart>
+</ResponsiveContainer>
+</div>
+<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+<div style={{ fontFamily: fontMono, fontSize: 11, color: dim, display: "flex", gap: 10 }}>
+<span>{activeChartTicker}</span>
+{intradayTradeMarkers.length > 0 && (
+<span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+<span style={{ color: mint }}>▲ buy</span>
+<span style={{ color: red }}>▼ sell</span>
+</span>
+)}
+</div>
+<div style={{ fontFamily: fontMono, fontSize: 13 }}>{usd(chartData[chartData.length - 1].price)}</div>
+</div>
+</>
+) : (
+<div style={{ padding: "20px 0", textAlign: "center", color: dim, fontSize: 12, fontFamily: fontUtil }}>
+Gathering live price history for {activeChartTicker}…
+</div>
+)}
+</div>
+)}
 </div>
 
 {/* tabs */}
@@ -602,65 +662,6 @@ background: `${signalColor}22`, color: signalColor,
 <div style={{ fontFamily: fontMono, fontSize: 11, color: dim, marginBottom: 2, letterSpacing: 0.5 }}>
 $50/trade · auto-closes at +0.4% / -0.4% · only trades tickers the daily scan rates ≥ {CONVICTION_BUY} · checks every 2 min
 </div>
-{chartableTickers.length > 0 && (
-<div style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D" }}>
-<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
-<div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-{chartableTickers.map((t) => (
-<button
-key={t}
-onClick={() => setChartTicker(t)}
-style={{
-fontFamily: fontMono, fontSize: 11, fontWeight: 700, padding: "4px 8px", borderRadius: 6,
-border: `1px solid ${t === activeChartTicker ? amber : "#26314A"}`,
-background: t === activeChartTicker ? `${amber}22` : "transparent",
-color: t === activeChartTicker ? amber : dim, cursor: "pointer",
-}}
->
-{t}
-</button>
-))}
-</div>
-<div style={{ display: "flex", alignItems: "center", gap: 5, fontFamily: fontMono, fontSize: 10, color: mint, letterSpacing: 0.5 }}>
-<span className="pulse" style={{ width: 6, height: 6, borderRadius: "50%", background: mint, display: "inline-block" }} />
-LIVE
-</div>
-</div>
-{chartData.length > 1 ? (
-<>
-<div style={{ height: 170 }}>
-<ResponsiveContainer width="100%" height="100%">
-<ComposedChart data={candles} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
-<XAxis dataKey="time" tick={{ fontSize: 9, fill: dim, fontFamily: fontMono }} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "#26314A" }} tickLine={false} />
-<YAxis hide domain={["dataMin", "dataMax"]} />
-<Tooltip content={<CandleTooltip />} />
-<Bar dataKey={(d) => [d.low, d.high]} shape={Candle} isAnimationActive={false} />
-{intradayTradeMarkers.length > 0 && (
-<Scatter data={intradayTradeMarkers} dataKey="price" shape={TradeMarker} isAnimationActive={false} />
-)}
-</ComposedChart>
-</ResponsiveContainer>
-</div>
-<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
-<div style={{ fontFamily: fontMono, fontSize: 11, color: dim, display: "flex", gap: 10 }}>
-<span>{activeChartTicker}</span>
-{intradayTradeMarkers.length > 0 && (
-<span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-<span style={{ color: mint }}>▲ buy</span>
-<span style={{ color: red }}>▼ sell</span>
-</span>
-)}
-</div>
-<div style={{ fontFamily: fontMono, fontSize: 13 }}>{usd(chartData[chartData.length - 1].price)}</div>
-</div>
-</>
-) : (
-<div style={{ padding: "20px 0", textAlign: "center", color: dim, fontSize: 12, fontFamily: fontUtil }}>
-Gathering live price history for {activeChartTicker}…
-</div>
-)}
-</div>
-)}
 <div style={{ display: "flex", gap: 10 }}>
 <CashCard label="Intraday stocks cash" value={state.intradayCash.stocks} />
 <CashCard label="Intraday crypto cash" value={state.intradayCash.crypto} />
