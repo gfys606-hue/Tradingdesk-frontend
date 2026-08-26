@@ -371,6 +371,13 @@ return { ...p, currentPrice, pl };
 const intradayValue = state.intradayCash.stocks + state.intradayCash.crypto +
 intradayList.reduce((sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice), 0);
 const intradayChange = (intradayValue - 200) / 200;
+  const TRADE_SIZE_CLIENT = 50; // mirrors TRADE_SIZE in the backend's intradayEngine.js
+  const intradayClosedToday = (state.trades || [])
+    .filter((t) => t.day === state.day && (t.reason === "intraday take-profit" || t.reason === "intraday stop-loss"))
+    .map((t) => ({ ...t, win: t.reason === "intraday take-profit", pnl: t.qty * t.price - TRADE_SIZE_CLIENT }));
+  const intradayWins = intradayClosedToday.filter((t) => t.win).length;
+  const intradayLosses = intradayClosedToday.length - intradayWins;
+  const intradayPnlToday = intradayClosedToday.reduce((sum, t) => sum + t.pnl, 0);
 
 const candles = buildCandles(chartData, 20);
   const intradayTradeMarkers = (state.trades || [])
@@ -674,7 +681,28 @@ $50/trade · auto-closes at +0.4% / -0.4% · only trades tickers the daily scan 
 <div style={{ fontFamily: fontMono, fontSize: 12, color: intradayChange >= 0 ? mint : red }}>{pct(intradayChange)} since $200 seed</div>
 </div>
 </div>
-{intradayList.length === 0 ? (
+<div style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div style={{ fontSize: 12, color: dim }}>Today's intraday P&L</div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontFamily: fontMono, fontSize: 14, color: intradayPnlToday >= 0 ? mint : red }}>{intradayPnlToday >= 0 ? "+" : ""}{usd(intradayPnlToday)}</div>
+              <div style={{ fontFamily: fontMono, fontSize: 11, color: dim }}>{intradayWins}W / {intradayLosses}L today</div>
+            </div>
+          </div>
+          {intradayClosedToday.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div style={{ fontFamily: fontMono, fontSize: 11, color: dim, letterSpacing: 0.5 }}>CLOSED TODAY</div>
+              {intradayClosedToday.slice().reverse().map((t, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", background: panel, borderRadius: 8, padding: "9px 12px", border: "1px solid #1E293D" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontFamily: fontMono, fontSize: 11, fontWeight: 700, padding: "2px 6px", borderRadius: 4, background: t.win ? "rgba(79,174,140,0.15)" : "rgba(196,69,59,0.15)", color: t.win ? mint : red }}>{t.win ? "WIN" : "LOSS"}</span>
+                    <span style={{ fontFamily: fontMono, fontSize: 13 }}>{t.ticker}</span>
+                  </div>
+                  <div style={{ fontFamily: fontMono, fontSize: 12, color: t.pnl >= 0 ? mint : red }}>{t.pnl >= 0 ? "+" : ""}{usd(t.pnl)}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {intradayList.length === 0 ? (
 <EmptyState label="No open intraday positions right now." />
 ) : (
 intradayList.map((p) => (
