@@ -373,7 +373,7 @@ intradayList.reduce((sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice
 const intradayChange = (intradayValue - 200) / 200;
   const TRADE_SIZE_CLIENT = 50; // mirrors TRADE_SIZE in the backend's intradayEngine.js
   const intradayClosedToday = (state.trades || [])
-    .filter((t) => t.day === state.day && (t.reason === "intraday take-profit" || t.reason === "intraday stop-loss"))
+    .filter((t) => t.createdAt && new Date(t.createdAt).toDateString() === new Date().toDateString() && (t.reason === "intraday take-profit" || t.reason === "intraday stop-loss"))
     .map((t) => ({ ...t, win: t.reason === "intraday take-profit", pnl: t.qty * t.price - TRADE_SIZE_CLIENT }));
   const intradayWins = intradayClosedToday.filter((t) => t.win).length;
   const intradayLosses = intradayClosedToday.length - intradayWins;
