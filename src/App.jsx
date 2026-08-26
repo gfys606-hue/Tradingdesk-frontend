@@ -372,17 +372,14 @@ const intradayValue = state.intradayCash.stocks + state.intradayCash.crypto +
 intradayList.reduce((sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice), 0);
 const intradayChange = (intradayValue - 200) / 200;
 
-const candles = buildCandles(chartData, 40);
-const candleBucketMs = candles.length > 1 ? candles[1].time - candles[0].time : 15000;
 const intradayTradeMarkers = (state.trades || [])
-.filter((t) => t.ticker === activeChartTicker && t.reason && t.reason.startsWith("intraday") && t.createdAt)
-.map((t) => ({
-time: bucketTradeTime(new Date(t.createdAt).getTime(), candleBucketMs),
-price: t.price,
-action: t.action,
-reason: t.reason,
-}))
-.filter((t) => candles.some((c) => c.time === t.time));
+  .filter((t) => t.ticker === activeChartTicker && t.reason && t.reason.startsWith("intraday") && t.createdAt)
+  .map((t) => ({
+    time: new Date(t.createdAt).getTime(),
+    price: t.price,
+    action: t.action,
+    reason: t.reason,
+  }));
 
 const Dial = ({ score, size = 44 }) => {
 const color = score >= CONVICTION_BUY ? mint : score < CONVICTION_SELL ? red : amber;
@@ -543,14 +540,14 @@ LIVE
 <>
 <div style={{ height: 170 }}>
 <ResponsiveContainer width="100%" height="100%">
-<ComposedChart data={candles} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
-<XAxis dataKey="time" tick={{ fontSize: 9, fill: dim, fontFamily: fontMono }} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "#26314A" }} tickLine={false} />
-<YAxis hide domain={["dataMin", "dataMax"]} />
-<Tooltip content={<CandleTooltip />} />
-<Bar dataKey={(d) => [d.low, d.high]} shape={Candle} isAnimationActive={false} />
-{intradayTradeMarkers.length > 0 && (
-<Scatter data={intradayTradeMarkers} dataKey="price" shape={TradeMarker} isAnimationActive={false} />
-)}
+<ComposedChart data={chartData} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
+  <XAxis dataKey="time" type="number" domain={["dataMin", "dataMax"]} tick={{ fontSize: 9, fill: dim, fontFamily: fontMono }} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "#26314A" }} tickLine={false} />
+  <YAxis hide domain={["dataMin", "dataMax"]} />
+  <Tooltip content={<CandleTooltip />} />
+  <Line type="monotone" dataKey="price" stroke={mint} strokeWidth={2} dot={false} isAnimationActive={false} />
+  {intradayTradeMarkers.length > 0 && (
+    <Scatter data={intradayTradeMarkers} dataKey="price" shape={TradeMarker} isAnimationActive={false} />
+  )}
 </ComposedChart>
 </ResponsiveContainer>
 </div>
