@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
+import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, ComposedChart, Bar, Scatter } from "recharts";
 import { TrendingUp, TrendingDown, Radar, ChevronRight, AlertTriangle, Wallet, History, Zap, Settings, RefreshCw, X, Activity } from "lucide-react";
 
 const CONVICTION_BUY = 72;
@@ -61,6 +61,8 @@ qty: Number(t.shares),
 price: Number(t.price),
 confidence: t.confidence,
 cls: t.cls,
+reason: t.reason || null,
+createdAt: t.created_at || null,
 }));
 
 const history = (data.history || []).map((h) => ({
@@ -114,6 +116,34 @@ const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 600
 if (mins < 1) return "just now";
 if (mins < 60) return `${mins}m ago`;
 return `${Math.round(mins / 60)}h ago`;
+}
+
+function buildCandles(points, targetCandles = 40) {
+if (!points || points.length === 0) return [];
+const sorted = [...points].sort((a, b) => a.time - b.time);
+if (sorted.length === 1) {
+const p = sorted[0];
+return [{ time: p.time, open: p.price, high: p.price, low: p.price, close: p.price }];
+}
+const span = sorted[sorted.length - 1].time - sorted[0].time;
+const bucketMs = Math.max(10000, Math.round(span / targetCandles / 1000) * 1000);
+const buckets = new Map();
+for (const p of sorted) {
+const start = Math.floor(p.time / bucketMs) * bucketMs;
+const existing = buckets.get(start);
+if (!existing) {
+buckets.set(start, { time: start, open: p.price, high: p.price, low: p.price, close: p.price });
+} else {
+existing.high = Math.max(existing.high, p.price);
+existing.low = Math.min(existing.low, p.price);
+existing.close = p.price;
+}
+}
+return [...buckets.values()].sort((a, b) => a.time - b.time);
+}
+
+function bucketTradeTime(ts, bucketMs) {
+return Math.floor(ts / bucketMs) * bucketMs;
 }
 
 const fontDisplay = "'Fraunces', Georgia, serif";
@@ -339,6 +369,18 @@ return { ...p, currentPrice, pl };
 const intradayValue = state.intradayCash.stocks + state.intradayCash.crypto +
 intradayList.reduce((sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice), 0);
 const intradayChange = (intradayValue - 200) / 200;
+
+const candles = buildCandles(chartData, 40);
+const candleBucketMs = candles.length > 1 ? candles[1].time - candles[0].time : 15000;
+const intradayTradeMarkers = (state.trades || [])
+.filter((t) => t.ticker === activeChartTicker && t.reason && t.reason.startsWith("intraday") && t.createdAt)
+.map((t) => ({
+time: bucketTradeTime(new Date(t.createdAt).getTime(), candleBucketMs),
+price: t.price,
+action: t.action,
+reason: t.reason,
+}))
+.filter((t) => candles.some((c) => c.time === t.time));
 
 const Dial = ({ score, size = 44 }) => {
 const color = score >= CONVICTION_BUY ? mint : score < CONVICTION_SELL ? red : amber;
@@ -586,22 +628,29 @@ LIVE
 </div>
 {chartData.length > 1 ? (
 <>
-<div style={{ height: 130 }}>
+<div style={{ height: 170 }}>
 <ResponsiveContainer width="100%" height="100%">
-<LineChart data={chartData}>
-<Line type="monotone" dataKey="price" stroke={mint} strokeWidth={2} dot={false} isAnimationActive={false} />
-<XAxis dataKey="time" hide />
+<ComposedChart data={candles} margin={{ top: 6, right: 4, left: 4, bottom: 0 }}>
+<XAxis dataKey="time" tick={{ fontSize: 9, fill: dim, fontFamily: fontMono }} tickFormatter={(t) => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} minTickGap={40} axisLine={{ stroke: "#26314A" }} tickLine={false} />
 <YAxis hide domain={["dataMin", "dataMax"]} />
-<Tooltip
-contentStyle={{ background: panel2, border: `1px solid #26314A`, borderRadius: 6, fontFamily: fontMono, fontSize: 12 }}
-labelFormatter={(t) => new Date(t).toLocaleTimeString()}
-formatter={(v) => [usd(v), activeChartTicker]}
-/>
-</LineChart>
+<Tooltip content={<CandleTooltip />} />
+<Bar dataKey={(d) => [d.low, d.high]} shape={Candle} isAnimationActive={false} />
+{intradayTradeMarkers.length > 0 && (
+<Scatter data={intradayTradeMarkers} dataKey="price" shape={TradeMarker} isAnimationActive={false} />
+)}
+</ComposedChart>
 </ResponsiveContainer>
 </div>
-<div style={{ display: "flex", justifyContent: "space-between", marginTop: 4 }}>
-<div style={{ fontFamily: fontMono, fontSize: 11, color: dim }}>{activeChartTicker}</div>
+<div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 4 }}>
+<div style={{ fontFamily: fontMono, fontSize: 11, color: dim, display: "flex", gap: 10 }}>
+<span>{activeChartTicker}</span>
+{intradayTradeMarkers.length > 0 && (
+<span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+<span style={{ color: mint }}>▲ buy</span>
+<span style={{ color: red }}>▼ sell</span>
+</span>
+)}
+</div>
 <div style={{ fontFamily: fontMono, fontSize: 13 }}>{usd(chartData[chartData.length - 1].price)}</div>
 </div>
 </>
@@ -736,6 +785,55 @@ return (
 <div style={{ display: "flex", gap: 6, alignItems: "flex-start", fontSize: 12, color: dim, fontFamily: fontUtil, lineHeight: 1.4 }}>
 <span style={{ marginTop: 2 }}>{icon}</span>
 <span>{text}</span>
+</div>
+);
+}
+
+function Candle({ x, y, width, height, payload }) {
+const { open, close, high, low } = payload;
+const isUp = close >= open;
+const color = isUp ? mint : red;
+const range = high - low || 1;
+const top = Math.max(open, close);
+const bottom = Math.min(open, close);
+const bodyTop = y + ((high - top) / range) * height;
+const bodyBottom = y + ((high - bottom) / range) * height;
+const bodyHeight = Math.max(1, bodyBottom - bodyTop);
+const cx = x + width / 2;
+const bodyWidth = Math.max(2, width * 0.6);
+return (
+<g>
+<line x1={cx} x2={cx} y1={y} y2={y + height} stroke={color} strokeWidth={1} />
+<rect x={cx - bodyWidth / 2} y={bodyTop} width={bodyWidth} height={bodyHeight} fill={color} />
+</g>
+);
+}
+
+function TradeMarker({ cx, cy, payload }) {
+if (cx == null || cy == null) return null;
+const isBuy = payload.action === "BUY";
+const color = isBuy ? mint : red;
+const points = isBuy
+? `${cx},${cy - 7} ${cx - 5},${cy + 3} ${cx + 5},${cy + 3}`
+: `${cx},${cy + 7} ${cx - 5},${cy - 3} ${cx + 5},${cy - 3}`;
+return <polygon points={points} fill={color} stroke={ink} strokeWidth={1} />;
+}
+
+function CandleTooltip({ active, payload, label }) {
+if (!active || !payload || !payload.length) return null;
+const candle = payload.find((p) => p.payload && p.payload.open != null);
+const trade = payload.find((p) => p.payload && p.payload.action);
+return (
+<div style={{ background: panel2, border: `1px solid #26314A`, borderRadius: 6, fontFamily: fontMono, fontSize: 11, padding: "6px 8px", color: paper }}>
+<div style={{ color: dim, marginBottom: 4 }}>{new Date(label).toLocaleTimeString()}</div>
+{candle && (
+<div>O {usd(candle.payload.open)} · H {usd(candle.payload.high)} · L {usd(candle.payload.low)} · C {usd(candle.payload.close)}</div>
+)}
+{trade && (
+<div style={{ color: trade.payload.action === "BUY" ? mint : red, marginTop: candle ? 4 : 0 }}>
+{trade.payload.action} @ {usd(trade.payload.price)} ({trade.payload.reason})
+</div>
+)}
 </div>
 );
 }
