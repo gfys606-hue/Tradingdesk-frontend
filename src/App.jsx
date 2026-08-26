@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip } from "recharts";
-import { TrendingUp, TrendingDown, Radar, ChevronRight, AlertTriangle, Wallet, History, Zap, Settings, RefreshCw, X } from "lucide-react";
+import { TrendingUp, TrendingDown, Radar, ChevronRight, AlertTriangle, Wallet, History, Zap, Settings, RefreshCw, X, Activity } from "lucide-react";
 
 const CONVICTION_BUY = 72;
 const CONVICTION_SELL = 30;
@@ -68,15 +68,27 @@ day: h.day_count,
 value: Number(h.total_value),
 }));
 
+const intradayPositions = (data.intradayPositions || []).map((p) => ({
+ticker: p.ticker,
+cls: p.cls,
+shares: Number(p.shares),
+entryPrice: Number(p.entry_price),
+openedAt: p.opened_at,
+}));
+const intradayPrices = data.intradayLatestPrices || {};
+
 return {
 day: s.day_count || 0,
 cash: { stocks: Number(s.cash_stocks || 0), crypto: Number(s.cash_crypto || 0) },
+intradayCash: { stocks: Number(s.intraday_cash_stocks || 0), crypto: Number(s.intraday_cash_crypto || 0) },
 holdings,
 prices,
 targets,
 candidates,
 trades,
 history,
+intradayPositions,
+intradayPrices,
 updatedAt: s.updated_at || null,
 };
 }
@@ -95,6 +107,13 @@ return `${n >= 0 ? "+" : ""}${(n * 100).toFixed(1)}%`;
 }
 function usd(n) {
 return n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: n < 5 ? 4 : 2 });
+}
+function timeAgo(iso) {
+if (!iso) return "";
+const mins = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 60000));
+if (mins < 1) return "just now";
+if (mins < 60) return `${mins}m ago`;
+return `${Math.round(mins / 60)}h ago`;
 }
 
 const fontDisplay = "'Fraunces', Georgia, serif";
@@ -252,6 +271,15 @@ else if (confidence < CONVICTION_SELL) signal = "SELL";
 return { t, ...h, price, pl: (price - h.avgCost) / h.avgCost, val: h.qty * price, confidence, targetPrice, signal };
 });
 
+const intradayList = (state.intradayPositions || []).map((p) => {
+const currentPrice = state.intradayPrices[p.ticker] ?? null;
+const pl = currentPrice != null ? (currentPrice - p.entryPrice) / p.entryPrice : null;
+return { ...p, currentPrice, pl };
+});
+const intradayValue = state.intradayCash.stocks + state.intradayCash.crypto +
+intradayList.reduce((sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice), 0);
+const intradayChange = (intradayValue - 200) / 200;
+
 const Dial = ({ score, size = 44 }) => {
 const color = score >= CONVICTION_BUY ? mint : score < CONVICTION_SELL ? red : amber;
 return (
@@ -386,6 +414,7 @@ formatter={(v) => [usd(v), "Value"]}
 <div style={{ display: "flex", borderBottom: `1px solid #1E293D`, position: "sticky", top: 0, background: ink, zIndex: 10 }}>
 <TabBtn id="scan" label="Scan" icon={Radar} />
 <TabBtn id="holdings" label="Holdings" icon={Wallet} />
+<TabBtn id="intraday" label="Intraday" icon={Activity} />
 <TabBtn id="log" label="Trade Log" icon={History} />
 </div>
 
@@ -460,6 +489,44 @@ background: `${signalColor}22`, color: signalColor,
 </div>
 );
 })
+)}
+</div>
+)}
+
+{tab === "intraday" && (
+<div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+<div style={{ fontFamily: fontMono, fontSize: 11, color: dim, marginBottom: 2, letterSpacing: 0.5 }}>
+$50/trade · auto-closes at +0.4% / -0.4% · only trades tickers the daily scan rates ≥ {CONVICTION_BUY} · checks every 2 min
+</div>
+<div style={{ display: "flex", gap: 10 }}>
+<CashCard label="Intraday stocks cash" value={state.intradayCash.stocks} />
+<CashCard label="Intraday crypto cash" value={state.intradayCash.crypto} />
+</div>
+<div style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+<div style={{ fontSize: 12, color: dim }}>Intraday pool value</div>
+<div style={{ textAlign: "right" }}>
+<div style={{ fontFamily: fontMono, fontSize: 14 }}>{usd(intradayValue)}</div>
+<div style={{ fontFamily: fontMono, fontSize: 12, color: intradayChange >= 0 ? mint : red }}>{pct(intradayChange)} since $200 seed</div>
+</div>
+</div>
+{intradayList.length === 0 ? (
+<EmptyState label="No open intraday positions right now." />
+) : (
+intradayList.map((p) => (
+<div key={p.ticker} style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+<div>
+<div style={{ fontFamily: fontMono, fontWeight: 600, fontSize: 14 }}>{p.ticker}</div>
+<div style={{ fontSize: 12, color: dim }}>{p.shares.toFixed(p.cls === "crypto" ? 4 : 2)} sh @ {usd(p.entryPrice)}</div>
+<div style={{ fontSize: 11, color: dim, marginTop: 4 }}>opened {timeAgo(p.openedAt)}</div>
+</div>
+<div style={{ textAlign: "right" }}>
+<div style={{ fontFamily: fontMono, fontSize: 14 }}>{p.currentPrice != null ? usd(p.currentPrice) : "—"}</div>
+<div style={{ fontFamily: fontMono, fontSize: 12, color: p.pl == null ? dim : p.pl >= 0 ? mint : red }}>
+{p.pl != null ? pct(p.pl) : "waiting for price"}
+</div>
+</div>
+</div>
+))
 )}
 </div>
 )}
