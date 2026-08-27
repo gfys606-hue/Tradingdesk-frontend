@@ -1240,6 +1240,37 @@ export default function TradingDesk() {
             until they pull back · trades every ticker the daily scan tracks{" "}
             · checks every few seconds
             </div>
+            {intradayList.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ fontFamily: fontMono, fontSize: 11, color: dim, letterSpacing: 0.5 }}>
+            OPEN POSITIONS
+            </div>
+            {intradayList.map((p) => (
+            <div key={p.ticker} style={{ background: panel, borderRadius: 10, padding: 12, border: "1px solid #1E293D", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+            <div style={{ fontFamily: fontMono, fontWeight: 600, fontSize: 14 }}>
+            {p.ticker}
+            </div>
+            <div style={{ fontSize: 12, color: dim }}>
+            {p.shares.toFixed(p.cls === "crypto" ? 4 : 2)} sh @{" "}
+            {usd(p.entryPrice)}
+            </div>
+            <div style={{ fontSize: 11, color: dim, marginTop: 4 }}>
+            opened {timeAgo(p.openedAt)}
+            </div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+            <div style={{ fontFamily: fontMono, fontSize: 14 }}>
+            {p.currentPrice != null ? usd(p.currentPrice) : "—"}
+            </div>
+            <div style={{ fontFamily: fontMono, fontSize: 12, color: p.pl == null ? dim : p.pl >= 0 ? mint : red }}>
+            {p.pl != null ? pct(p.pl) : "waiting for price"}
+            </div>
+            </div>
+            </div>
+            ))}
+            </div>
+            )}
             <div style={{ display: "flex", gap: 10 }}>
               <CashCard
                 label="Intraday stocks cash"
@@ -1377,58 +1408,7 @@ export default function TradingDesk() {
                   ))}
               </div>
             )}
-            {intradayList.length === 0 ? (
-              <EmptyState label="No open intraday positions right now." />
-            ) : (
-              intradayList.map((p) => (
-                <div
-                  key={p.ticker}
-                  style={{
-                    background: panel,
-                    borderRadius: 10,
-                    padding: 12,
-                    border: "1px solid #1E293D",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <div
-                      style={{
-                        fontFamily: fontMono,
-                        fontWeight: 600,
-                        fontSize: 14,
-                      }}
-                    >
-                      {p.ticker}
-                    </div>
-                    <div style={{ fontSize: 12, color: dim }}>
-                      {p.shares.toFixed(p.cls === "crypto" ? 4 : 2)} sh @{" "}
-                      {usd(p.entryPrice)}
-                    </div>
-                    <div style={{ fontSize: 11, color: dim, marginTop: 4 }}>
-                      opened {timeAgo(p.openedAt)}
-                    </div>
-                  </div>
-                  <div style={{ textAlign: "right" }}>
-                    <div style={{ fontFamily: fontMono, fontSize: 14 }}>
-                      {p.currentPrice != null ? usd(p.currentPrice) : "—"}
-                    </div>
-                    <div
-                      style={{
-                        fontFamily: fontMono,
-                        fontSize: 12,
-                        color: p.pl == null ? dim : p.pl >= 0 ? mint : red,
-                      }}
-                    >
-                      {p.pl != null ? pct(p.pl) : "waiting for price"}
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
+            </div>
         )}
 
         {tab === "log" && (
