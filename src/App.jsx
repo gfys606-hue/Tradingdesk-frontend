@@ -31,6 +31,7 @@ const CONVICTION_SELL = 30;
 const TOTAL_START = 2000; // $1000 stocks + $1000 crypto, seeded by the backend on migrate
 const BACKEND_URL_KEY = "desk-backend-url";
 const POLL_MS = 30000; // pick up server-side cron trades without a manual refresh
+const RETRY_MS = 5000; // retry sooner while unreachable (e.g. a free-tier host waking from sleep)
 
 // ---------- backend calls ----------
 function normalizeUrl(u) {
@@ -157,6 +158,18 @@ function timeAgo(iso) {
   return `${Math.round(mins / 60)}h ago`;
 }
 
+// A "Failed to fetch" is the browser's generic network-error message - it
+// fires before any HTTP response comes back at all, which on this app is
+// almost always the free-tier backend host waking up from an idle sleep
+// rather than a real outage. Surface that plainly instead of the scary
+// raw browser message.
+function friendlyConnError(message) {
+  if (message && message.includes("Failed to fetch")) {
+    return "Backend is waking up from an idle sleep (free hosting spins it down after inactivity) - this can take up to a minute. Retrying automatically.";
+  }
+  return message;
+}
+
 function buildCandles(points, targetCandles = 40) {
   if (!points || points.length === 0) return [];
   const sorted = [...points].sort((a, b) => a.time - b.time);
@@ -229,9 +242,11 @@ export default function TradingDesk() {
   const [connError, setConnError] = useState(null);
   const pollRef = useRef(null);
 
+  // live price chart: which ticker is selected, and its accumulated points
   const [chartTicker, setChartTicker] = useState(null);
   const [chartData, setChartData] = useState([]);
 
+  // load saved backend URL once on mount
   useEffect(() => {
     (async () => {
       try {
@@ -240,29 +255,44 @@ export default function TradingDesk() {
           setBackendUrl(stored);
           setUrlInput(stored);
         }
-      } catch (e) {}
+      } catch (e) {
+        // no saved URL yet — that's fine
+      }
       setUrlChecked(true);
     })();
   }, []);
 
   const loadState = useCallback(async (url) => {
     setLoading(true);
-    setConnError(null);
     try {
       const next = await fetchState(url);
       setState(next);
+      setConnError(null);
+      return true;
     } catch (e) {
       setConnError(e.message || "Could not reach backend");
+      return false;
     } finally {
       setLoading(false);
     }
   }, []);
 
+  // once we have a backend URL, load state + poll - faster while unreachable
+  // (e.g. a free-tier host cold-starting) so the dashboard recovers quickly,
+  // then back to the normal cadence as soon as a request succeeds.
   useEffect(() => {
     if (!backendUrl) return;
-    loadState(backendUrl);
-    pollRef.current = setInterval(() => loadState(backendUrl), POLL_MS);
-    return () => clearInterval(pollRef.current);
+    let cancelled = false;
+    const tick = async () => {
+      const ok = await loadState(backendUrl);
+      if (cancelled) return;
+      pollRef.current = setTimeout(tick, ok ? POLL_MS : RETRY_MS);
+    };
+    tick();
+    return () => {
+      cancelled = true;
+      clearTimeout(pollRef.current);
+    };
   }, [backendUrl, loadState]);
 
   const saveBackendUrl = async (raw) => {
@@ -300,6 +330,10 @@ export default function TradingDesk() {
     return v;
   };
 
+  // Live chart's ticker universe: whatever's currently open, plus whatever the
+  // daily scan rates buy-eligible - the same set the intraday engine can trade.
+  // Computed unconditionally (state may still be null) so it can sit above the
+  // early-return guards, next to the effect that depends on it.
   const bestStock = state
     ? (state.candidates || [])
         .filter((c) => c.cls === "stocks")
@@ -336,6 +370,9 @@ export default function TradingDesk() {
     return candMatch ? candMatch.cls : "crypto";
   })();
 
+  // Seeds from recent price_ticks history, then polls a fresh quote every 8s
+  // while the Intraday tab is open - independent of the 30s full-state poll,
+  // so the chart visibly moves instead of only updating on the slow cycle.
   useEffect(() => {
     if (!backendUrl || !activeChartTicker) return;
     let cancelled = false;
@@ -353,11 +390,13 @@ export default function TradingDesk() {
         if (cancelled) return;
         setChartData(
           (data.ticks || []).map((t) => ({
-            time: new Date(t.recorded_at).getTime(),
+            time: newDate(t.recorded_at).getTime(),
             price: Number(t.price),
           })),
         );
-      } catch (e) {}
+      } catch (e) {
+        // history fetch failed - the chart just seeds empty and fills in live
+      }
     })();
 
     const poll = async () => {
@@ -373,7 +412,9 @@ export default function TradingDesk() {
             -150,
           ),
         );
-      } catch (e) {}
+      } catch (e) {
+        // transient - next tick retries
+      }
     };
     const id = setInterval(poll, 8000);
 
@@ -383,6 +424,7 @@ export default function TradingDesk() {
     };
   }, [backendUrl, activeChartTicker, chartTickerCls]);
 
+  // ---------- setup screen: no backend URL saved yet ----------
   if (!urlChecked) {
     return <LoadingScreen label="loading desk…" />;
   }
@@ -430,7 +472,7 @@ export default function TradingDesk() {
               lineHeight: 1.5,
             }}
           >
-            {connError}
+            {friendlyConnError(connError)}
           </div>
           <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
             <button
@@ -499,20 +541,23 @@ export default function TradingDesk() {
       0,
     );
   const intradayChange = (intradayValue - 200) / 200;
-  const TRADE_SIZE_CLIENT = 50;
+  const TRADE_SIZE_CLIENT = 50; // mirrors TRADE_SIZE in the backend's intradayEngine.js
   const intradayClosedToday = (state.trades || [])
     .filter(
       (t) =>
         t.createdAt &&
         new Date(t.createdAt).toDateString() === new Date().toDateString() &&
         (t.reason === "intraday take-profit" ||
-          t.reason === "intraday stop-loss"),
+          t.reason === "intraday stop-loss" ||
+          t.reason === "intraday stagnant"),
     )
-    .map((t) => ({
-      ...t,
-      win: t.reason === "intraday take-profit",
-      pnl: t.qty * t.price - TRADE_SIZE_CLIENT,
-    }));
+    .map((t) => {
+      const pnl = t.qty * t.price - TRADE_SIZE_CLIENT;
+      const win =
+        t.reason === "intraday take-profit" ||
+        (t.reason === "intraday stagnant" && pnl > 0);
+      return { ...t, win, pnl };
+    });
   const intradayWins = intradayClosedToday.filter((t) => t.win).length;
   const intradayLosses = intradayClosedToday.length - intradayWins;
   const intradayPnlToday = intradayClosedToday.reduce(
@@ -619,17 +664,18 @@ export default function TradingDesk() {
     >
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <style>{`
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
-* { box-sizing: border-box; }
-body { margin: 0; }
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-thumb { background: #26314A; border-radius: 4px; }
-@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-.spin { animation: spin 0.8s linear infinite; }
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
-.pulse { animation: pulse 1.4s ease-in-out infinite; }
-`}</style>
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap');
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              * { box-sizing: border-box; }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      body { margin: 0; }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              ::-webkit-scrollbar { width: 6px; height: 6px; }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      ::-webkit-scrollbar-thumb { background: #26314A; border-radius: 4px; }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      .spin { animation: spin 0.8s linear infinite; }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      .pulse { animation: pulse 1.4s ease-in-out infinite; }
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            `}</style>
 
+      {/* header */}
       <div
         style={{ padding: "20px 16px 14px", borderBottom: `1px solid #1E293D` }}
       >
@@ -771,10 +817,13 @@ body { margin: 0; }
               color: red,
             }}
           >
-            Last refresh failed: {connError} — showing cached data.
+            {connError.includes("Failed to fetch")
+              ? "Backend went quiet for a moment (likely waking up from an idle sleep) — retrying automatically, showing cached data."
+              : `Last refresh failed: ${connError} — showing cached data.`}
           </div>
         )}
 
+        {/* chart */}
         {state.history.length > 1 && (
           <div style={{ height: 70, marginTop: 14 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -971,6 +1020,7 @@ body { margin: 0; }
         )}
       </div>
 
+      {/* tabs */}
       <div
         style={{
           display: "flex",
@@ -1611,6 +1661,11 @@ function Note({ icon, text }) {
   );
 }
 
+// Draws real OHLC candlesticks (wick + body) directly on the chart's own
+// pixel scales via Recharts' <Customized> hook. This bypasses Bar's
+// category-axis bar-layout math, which doesn't handle a numeric time axis
+// reliably and was why the price chart only ever showed the buy/sell
+// trade-marker triangles instead of real candles.
 function CandlestickLayer(props) {
   const { xAxisMap, yAxisMap, candles } = props;
   if (!candles || candles.length === 0 || !xAxisMap || !yAxisMap) return null;
@@ -1680,6 +1735,10 @@ function TradeMarker({ cx, cy, payload }) {
   return <polygon points={points} fill={color} stroke={ink} strokeWidth={1} />;
 }
 
+// Looks up the OHLC candle nearest the hovered time directly from `candles`,
+// rather than relying on Recharts' per-series tooltip payload (which only
+// ever carried the trade-marker Scatter data once the candles moved to the
+// Customized layer above).
 function CandleTooltip({ active, payload, label, candles }) {
   if (!active) return null;
   const candle =
