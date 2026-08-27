@@ -553,9 +553,7 @@ export default function TradingDesk() {
     )
     .map((t) => {
       const pnl = t.qty * t.price - TRADE_SIZE_CLIENT;
-      const win =
-        t.reason === "intraday take-profit" ||
-        (t.reason === "intraday stagnant" && pnl > 0);
+      const win = pnl > 0;
       return { ...t, win, pnl };
     });
   const intradayWins = intradayClosedToday.filter((t) => t.win).length;
@@ -1238,10 +1236,9 @@ export default function TradingDesk() {
                 marginBottom: 2,
                 letterSpacing: 0.5,
               }}
-            >
-              $50/trade · stop-loss at -4%, wins run uncapped past +4% until
-              they pull back · only trades tickers the daily scan rates ≥{" "}
-              {CONVICTION_BUY} · checks every 2 min
+            $50/trade · stop-loss/take-profit at ±0.05%, wins run uncapped
+            until they pull back · trades every ticker the daily scan tracks{" "}
+            · checks every few seconds
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <CashCard
