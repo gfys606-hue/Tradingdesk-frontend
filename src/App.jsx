@@ -1174,12 +1174,21 @@ export default function TradingDesk() {
                     <div>
                       <div
                         style={{
-                          fontFamily: fontMono,
-                          fontWeight: 600,
-                          fontSize: 14,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
                         }}
                       >
-                        {h.t}
+                        <span
+                          style={{
+                            fontFamily: fontMono,
+                            fontWeight: 600,
+                            fontSize: 14,
+                          }}
+                        >
+                          {h.t}
+                        </span>
+                        <ClsTag cls={h.cls} />
                       </div>
                       <div style={{ fontSize: 12, color: dim }}>
                         {h.qty.toFixed(h.cls === "crypto" ? 4 : 2)} sh @{" "}
@@ -1277,12 +1286,21 @@ export default function TradingDesk() {
                     <div>
                       <div
                         style={{
-                          fontFamily: fontMono,
-                          fontWeight: 600,
-                          fontSize: 14,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
                         }}
                       >
-                        {p.ticker}
+                        <span
+                          style={{
+                            fontFamily: fontMono,
+                            fontWeight: 600,
+                            fontSize: 14,
+                          }}
+                        >
+                          {p.ticker}
+                        </span>
+                        <ClsTag cls={p.cls} />
                       </div>
                       <div style={{ fontSize: 12, color: dim }}>
                         {p.shares.toFixed(p.cls === "crypto" ? 4 : 2)} sh @{" "}
@@ -1429,6 +1447,7 @@ export default function TradingDesk() {
                       <span style={{ fontFamily: fontMono, fontSize: 13 }}>
                         {t.ticker}
                       </span>
+                      <ClsTag cls={t.cls} />
                       {t.createdAt && (
                         <span
                           style={{
@@ -1498,6 +1517,7 @@ export default function TradingDesk() {
                     <span style={{ fontFamily: fontMono, fontSize: 13 }}>
                       {t.ticker}
                     </span>
+                    <ClsTag cls={t.cls} />
                     <span style={{ fontSize: 11, color: dim }}>
                       day {t.day}
                     </span>
@@ -1682,6 +1702,28 @@ function Note({ icon, text }) {
       <span style={{ marginTop: 2 }}>{icon}</span>
       <span>{text}</span>
     </div>
+  );
+}
+
+function ClsTag({ cls }) {
+  const isCrypto = cls === "crypto";
+  return (
+    <span
+      style={{
+        fontFamily: fontMono,
+        fontSize: 10,
+        fontWeight: 700,
+        padding: "2px 6px",
+        borderRadius: 4,
+        background: isCrypto
+          ? "rgba(232,163,61,0.15)"
+          : "rgba(138,147,166,0.15)",
+        color: isCrypto ? amber : dim,
+        letterSpacing: 0.3,
+      }}
+    >
+      {isCrypto ? "CRYPTO" : "STOCK"}
+    </span>
   );
 }
 
