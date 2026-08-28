@@ -322,7 +322,15 @@ export default function TradingDesk() {
   };
 
   const portfolioValue = (s) => {
-    let v = s.cash.stocks + s.cash.crypto;
+    let v =
+      s.cash.stocks +
+      s.cash.crypto +
+      s.intradayCash.stocks +
+      s.intradayCash.crypto;
+    (s.intradayPositions || []).forEach((p) => {
+      const price = s.intradayPrices[p.ticker] ?? p.entryPrice;
+      v += p.shares * price;
+    });
     Object.entries(s.holdings).forEach(([t, h]) => {
       const price = s.prices[t] || h.avgCost;
       v += h.qty * price;
@@ -1421,6 +1429,17 @@ export default function TradingDesk() {
                       <span style={{ fontFamily: fontMono, fontSize: 13 }}>
                         {t.ticker}
                       </span>
+                      {t.createdAt && (
+                        <span
+                          style={{
+                            fontFamily: fontMono,
+                            fontSize: 11,
+                            color: dim,
+                          }}
+                        >
+                          {timeAgo(t.createdAt)}
+                        </span>
+                      )}
                     </div>
                     <div
                       style={{
