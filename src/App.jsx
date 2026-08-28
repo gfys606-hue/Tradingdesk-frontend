@@ -1254,9 +1254,9 @@ export default function TradingDesk() {
                 letterSpacing: 0.5,
               }}
             >
-              $50/trade · stop-loss/take-profit at ±0.05%, wins run uncapped
-              until they pull back · trades every ticker the daily scan tracks ·
-              checks every few seconds
+              $50/trade · stop-loss at -0.6%, wins lock in at +0.25% and run
+              until price pulls back 0.1% from its peak · trades every ticker
+              the daily scan tracks · checks every few seconds
             </div>
             {intradayList.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
