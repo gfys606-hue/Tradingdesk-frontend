@@ -147,6 +147,9 @@ function usd(n) {
     maximumFractionDigits: n < 5 ? 4 : 2,
   });
 }
+function signedUsd(n) {
+  return `${n >= 0 ? "+" : "-"}${usd(Math.abs(n))}`;
+}
 function timeAgo(iso) {
   if (!iso) return "";
   const mins = Math.max(
@@ -508,6 +511,7 @@ export default function TradingDesk() {
 
   const totalValue = portfolioValue(state);
   const totalChange = (totalValue - TOTAL_START) / TOTAL_START;
+  const pnlDollars = totalValue - TOTAL_START;
   const candidateByTicker = {};
   (state.candidates || []).forEach((c) => (candidateByTicker[c.ticker] = c));
   const holdingsList = Object.entries(state.holdings).map(([t, h]) => {
@@ -706,6 +710,18 @@ export default function TradingDesk() {
             </div>
             <div
               style={{
+                fontFamily: fontMono,
+                fontSize: 10,
+                color: dim,
+                letterSpacing: 1,
+                textTransform: "uppercase",
+                marginTop: 6,
+              }}
+            >
+              Total funds
+            </div>
+            <div
+              style={{
                 fontFamily: fontDisplay,
                 fontSize: 26,
                 fontWeight: 700,
@@ -713,23 +729,6 @@ export default function TradingDesk() {
               }}
             >
               {usd(totalValue)}
-            </div>
-            <div
-              style={{
-                fontFamily: fontMono,
-                fontSize: 13,
-                color: totalChange >= 0 ? mint : red,
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-              }}
-            >
-              {totalChange >= 0 ? (
-                <TrendingUp size={13} />
-              ) : (
-                <TrendingDown size={13} />
-              )}
-              {pct(totalChange)} since inception
             </div>
           </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -791,6 +790,19 @@ export default function TradingDesk() {
             >
               <Zap size={14} /> {running ? "Scanning…" : "Run Scan"}
             </button>
+          </div>
+          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+            <CashCard
+              label="Starting capital"
+              value={TOTAL_START}
+              sub="fixed no deposits"
+            />
+            <CashCard
+              label="Profit / Loss"
+              value={signedUsd(pnlDollars)}
+              color={pnlDollars >= 0 ? mint : red}
+              sub={pct(totalChange)}
+            />
           </div>
         </div>
 
@@ -1856,7 +1868,7 @@ function CandleTooltip({ active, payload, label, candles }) {
   );
 }
 
-function CashCard({ label, value }) {
+function CashCard({ label, value, color, sub }) {
   return (
     <div
       style={{
@@ -1870,9 +1882,12 @@ function CashCard({ label, value }) {
       <div style={{ fontSize: 11, color: dim, fontFamily: fontUtil }}>
         {label}
       </div>
-      <div style={{ fontFamily: fontMono, fontSize: 16, marginTop: 2 }}>
-        {usd(value)}
+      <div style={{ fontFamily: fontMono, fontSize: 16, marginTop: 2, color }}>
+        {typeof value === "string" ? value : usd(value)}
       </div>
+      {sub && (
+        <div style={{ fontSize: 10, color: dim, marginTop: 4 }}>{sub}</div>
+      )}
     </div>
   );
 }
