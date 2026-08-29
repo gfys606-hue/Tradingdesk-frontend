@@ -341,6 +341,26 @@ export default function TradingDesk() {
     return v;
   };
 
+  // Combined (swing holdings + open intraday positions) market value and cost
+  // basis for one asset class - the breakdown shown beside Total Funds.
+  const classBreakdown = (s, cls) => {
+    let market = 0;
+    let cost = 0;
+    Object.entries(s.holdings).forEach(([t, h]) => {
+      if (h.cls !== cls) return;
+      const price = s.prices[t] || h.avgCost;
+      market += h.qty * price;
+      cost += h.qty * h.avgCost;
+    });
+    (s.intradayPositions || []).forEach((p) => {
+      if (p.cls !== cls) return;
+      const price = s.intradayPrices[p.ticker] ?? p.entryPrice;
+      market += p.shares * price;
+      cost += p.shares * p.entryPrice;
+    });
+    return { market, cost };
+  };
+
   // Live chart's ticker universe: whatever's currently open, plus whatever the
   // daily scan rates buy-eligible - the same set the intraday engine can trade.
   // Computed unconditionally (state may still be null) so it can sit above the
@@ -512,6 +532,13 @@ export default function TradingDesk() {
   const totalValue = portfolioValue(state);
   const totalChange = (totalValue - TOTAL_START) / TOTAL_START;
   const pnlDollars = totalValue - TOTAL_START;
+  const cashTotal =
+    state.cash.stocks +
+    state.cash.crypto +
+    state.intradayCash.stocks +
+    state.intradayCash.crypto;
+  const stockBreakdown = classBreakdown(state, "stocks");
+  const cryptoBreakdown = classBreakdown(state, "crypto");
   const candidateByTicker = {};
   (state.candidates || []).forEach((c) => (candidateByTicker[c.ticker] = c));
   const holdingsList = Object.entries(state.holdings).map(([t, h]) => {
@@ -804,6 +831,30 @@ export default function TradingDesk() {
               sub={pct(totalChange)}
             />
           </div>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            marginTop: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          <CashCard label="Cash" value={cashTotal} />
+          <CashCard
+            label="Stock holdings (market)"
+            value={stockBreakdown.market}
+          />
+          <CashCard label="Stock holdings (cost)" value={stockBreakdown.cost} />
+          <CashCard
+            label="Crypto holdings (market)"
+            value={cryptoBreakdown.market}
+          />
+          <CashCard
+            label="Crypto holdings (cost)"
+            value={cryptoBreakdown.cost}
+          />
         </div>
 
         {scanError && (
