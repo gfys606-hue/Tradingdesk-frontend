@@ -572,15 +572,15 @@ export default function TradingDesk() {
         : null;
     return { ...p, currentPrice, pl };
   });
-  const intradayValue =
-    state.intradayCash.stocks +
-    state.intradayCash.crypto +
-    intradayList.reduce(
-      (sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice),
-      0,
-    );
-  const intradayChange = (intradayValue - 200) / 200;
-  const TRADE_SIZE_CLIENT = 50; // mirrors TRADE_SIZE in the backend's intradayEngine.js
+  // Intraday now trades against the same shared cash_stocks/cash_crypto pool
+  // as the daily engine (see Cash in the header breakdown) rather than an
+  // isolated allocation, so this is just the mark-to-market value of
+  // currently open intraday positions, not a separate "pool".
+  const intradayPositionsValue = intradayList.reduce(
+    (sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice),
+    0,
+  );
+  const TRADE_SIZE_CLIENT = 250; // mirrors TRADE_SIZE in the backend's intradayEngine.js
   const intradayClosedToday = (state.trades || [])
     .filter(
       (t) =>
@@ -1317,9 +1317,10 @@ export default function TradingDesk() {
                 letterSpacing: 0.5,
               }}
             >
-              $50/trade · stop-loss at -0.6%, wins lock in at +0.25% and run
-              until price pulls back 0.1% from its peak · trades every ticker
-              the daily scan tracks · checks every few seconds
+              $250/trade · shares the swing engine's cash pool · stop-loss at
+              -0.6%, wins lock in at +0.25% and run until price pulls back
+              0.1% from its peak · trades every ticker the daily scan tracks ·
+              checks every few seconds
             </div>
             {intradayList.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
@@ -1391,16 +1392,6 @@ export default function TradingDesk() {
                 ))}
               </div>
             )}
-            <div style={{ display: "flex", gap: 10 }}>
-              <CashCard
-                label="Intraday stocks cash"
-                value={state.intradayCash.stocks}
-              />
-              <CashCard
-                label="Intraday crypto cash"
-                value={state.intradayCash.crypto}
-              />
-            </div>
             <div
               style={{
                 background: panel,
@@ -1413,20 +1404,17 @@ export default function TradingDesk() {
               }}
             >
               <div style={{ fontSize: 12, color: dim }}>
-                Intraday pool value
+                Open intraday positions value
+                <div style={{ fontSize: 10, marginTop: 2 }}>
+                  cash draws from the shared pool above
+                </div>
               </div>
               <div style={{ textAlign: "right" }}>
                 <div style={{ fontFamily: fontMono, fontSize: 14 }}>
-                  {usd(intradayValue)}
+                  {usd(intradayPositionsValue)}
                 </div>
-                <div
-                  style={{
-                    fontFamily: fontMono,
-                    fontSize: 12,
-                    color: intradayChange >= 0 ? mint : red,
-                  }}
-                >
-                  {pct(intradayChange)} since $200 seed
+                <div style={{ fontFamily: fontMono, fontSize: 12, color: dim }}>
+                  {intradayList.length} open
                 </div>
               </div>
             </div>
