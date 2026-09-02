@@ -90,6 +90,8 @@ async function fetchState(backendUrl) {
     cls: t.cls,
     reason: t.reason || null,
     createdAt: t.created_at || null,
+    fee: t.fee != null ? Number(t.fee) : null,
+    fillPrice: t.fill_price != null ? Number(t.fill_price) : null,
   }));
 
   const history = (data.history || []).map((h) => ({
@@ -532,6 +534,17 @@ export default function TradingDesk() {
   const totalValue = portfolioValue(state);
   const totalChange = (totalValue - TOTAL_START) / TOTAL_START;
   const pnlDollars = totalValue - TOTAL_START;
+  // Trading costs the engine has actually charged, over the trade log it
+  // still retains. Slippage is the gap between the observed market price
+  // and the price the fill was modelled at. Trades from before the cost
+  // model contribute nothing, so this is "costs charged", not a forecast.
+  const costsPaid = (state.trades || []).reduce((sum, t) => {
+    const fee = t.fee || 0;
+    const slip =
+      t.fillPrice != null ? Math.abs(t.fillPrice - t.price) * t.qty : 0;
+    return sum + fee + slip;
+  }, 0);
+  const grossPnlDollars = pnlDollars + costsPaid;
   const cashTotal =
     state.cash.stocks +
     state.cash.crypto +
@@ -586,12 +599,14 @@ export default function TradingDesk() {
       (t) =>
         t.createdAt &&
         new Date(t.createdAt).toDateString() === new Date().toDateString() &&
-        (t.reason === "intraday take-profit" ||
+        (t.reason === "intraday trailing take-profit" ||
+          t.reason === "intraday take-profit" ||
           t.reason === "intraday stop-loss" ||
           t.reason === "intraday stagnant"),
     )
     .map((t) => {
-      const pnl = t.qty * t.price - TRADE_SIZE_CLIENT;
+      const exitPrice = t.fillPrice != null ? t.fillPrice : t.price;
+      const pnl = t.qty * exitPrice - (t.fee || 0) - TRADE_SIZE_CLIENT;
       const win = pnl > 0;
       return { ...t, win, pnl };
     });
@@ -828,7 +843,7 @@ export default function TradingDesk() {
               label="Profit / Loss"
               value={signedUsd(pnlDollars)}
               color={pnlDollars >= 0 ? mint : red}
-              sub={pct(totalChange)}
+              sub={pct(totalChange) + " · gross " + signedUsd(grossPnlDollars)}
             />
           </div>
         </div>
@@ -842,6 +857,12 @@ export default function TradingDesk() {
           }}
         >
           <CashCard label="Cash" value={cashTotal} />
+          <CashCard
+            label="Costs paid"
+            value={usd(costsPaid)}
+            color={costsPaid > 0 ? red : dim}
+            sub="fees + slippage"
+          />
           <CashCard
             label="Stock holdings (market)"
             value={stockBreakdown.market}
@@ -1576,7 +1597,12 @@ export default function TradingDesk() {
                   <div
                     style={{ fontFamily: fontMono, fontSize: 12, color: dim }}
                   >
-                    {usd(t.qty * t.price)} @ {t.confidence}
+                    {usd(t.qty * t.price)}
+                    {t.fee != null
+                      ? " · fee " + usd(t.fee)
+                      : t.confidence != null
+                        ? " @ " + t.confidence
+                        : ""}
                   </div>
                 </div>
               ))
