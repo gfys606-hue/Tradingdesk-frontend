@@ -599,10 +599,8 @@ export default function TradingDesk() {
       (t) =>
         t.createdAt &&
         new Date(t.createdAt).toDateString() === new Date().toDateString() &&
-        (t.reason === "intraday trailing take-profit" ||
-          t.reason === "intraday take-profit" ||
-          t.reason === "intraday stop-loss" ||
-          t.reason === "intraday stagnant"),
+        t.action === "SELL" &&
+        (t.reason || "").startsWith("intraday "),
     )
     .map((t) => {
       const exitPrice = t.fillPrice != null ? t.fillPrice : t.price;
