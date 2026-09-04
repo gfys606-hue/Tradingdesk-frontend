@@ -619,6 +619,20 @@ export default function TradingDesk() {
   const intradayRiskedToday = intradayClosedToday.length * TRADE_SIZE_CLIENT;
   const intradayPnlPctToday =
     intradayRiskedToday > 0 ? intradayPnlToday / intradayRiskedToday : null;
+  // Same split by win/loss, so the size of the wins can be weighed against
+  // the size of the losses - not just how many of each.
+  const intradayWinsTotal = intradayClosedToday
+    .filter((t) => t.win)
+    .reduce((sum, t) => sum + t.pnl, 0);
+  const intradayLossesTotal = intradayClosedToday
+    .filter((t) => !t.win)
+    .reduce((sum, t) => sum + t.pnl, 0);
+  const intradayWinsPct =
+    intradayWins > 0 ? intradayWinsTotal / (intradayWins * TRADE_SIZE_CLIENT) : null;
+  const intradayLossesPct =
+    intradayLosses > 0
+      ? intradayLossesTotal / (intradayLosses * TRADE_SIZE_CLIENT)
+      : null;
 
   const candles = buildCandles(chartData, 20);
   const intradayTradeMarkers = (state.trades || [])
@@ -1478,8 +1492,25 @@ export default function TradingDesk() {
                     </span>
                   )}
                 </div>
-                <div style={{ fontFamily: fontMono, fontSize: 11, color: dim }}>
-                  {intradayWins}W / {intradayLosses}L today
+                <div
+                  style={{
+                    fontFamily: fontMono,
+                    fontSize: 11,
+                    display: "flex",
+                    gap: 10,
+                    justifyContent: "flex-end",
+                  }}
+                >
+                  <span style={{ color: intradayWins > 0 ? mint : dim }}>
+                    {intradayWins}W
+                    {intradayWins > 0 &&
+                      ` +${usd(intradayWinsTotal)} (${pct(intradayWinsPct)})`}
+                  </span>
+                  <span style={{ color: intradayLosses > 0 ? red : dim }}>
+                    {intradayLosses}L
+                    {intradayLosses > 0 &&
+                      ` ${usd(intradayLossesTotal)} (${pct(intradayLossesPct)})`}
+                  </span>
                 </div>
               </div>
             </div>
