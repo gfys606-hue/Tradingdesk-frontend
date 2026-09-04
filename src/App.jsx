@@ -614,6 +614,11 @@ export default function TradingDesk() {
     (sum, t) => sum + t.pnl,
     0,
   );
+  // % return on the capital actually risked across today's closed trades -
+  // each trade risks TRADE_SIZE_CLIENT, so the denominator scales with count.
+  const intradayRiskedToday = intradayClosedToday.length * TRADE_SIZE_CLIENT;
+  const intradayPnlPctToday =
+    intradayRiskedToday > 0 ? intradayPnlToday / intradayRiskedToday : null;
 
   const candles = buildCandles(chartData, 20);
   const intradayTradeMarkers = (state.trades || [])
@@ -1457,10 +1462,21 @@ export default function TradingDesk() {
                     fontFamily: fontMono,
                     fontSize: 14,
                     color: intradayPnlToday >= 0 ? mint : red,
+                    display: "flex",
+                    gap: 6,
+                    justifyContent: "flex-end",
+                    alignItems: "baseline",
                   }}
                 >
-                  {intradayPnlToday >= 0 ? "+" : ""}
-                  {usd(intradayPnlToday)}
+                  <span>
+                    {intradayPnlToday >= 0 ? "+" : ""}
+                    {usd(intradayPnlToday)}
+                  </span>
+                  {intradayPnlPctToday != null && (
+                    <span style={{ fontSize: 12 }}>
+                      ({pct(intradayPnlPctToday)})
+                    </span>
+                  )}
                 </div>
                 <div style={{ fontFamily: fontMono, fontSize: 11, color: dim }}>
                   {intradayWins}W / {intradayLosses}L today
