@@ -107,6 +107,13 @@ async function fetchState(backendUrl) {
     openedAt: p.opened_at,
   }));
   const intradayPrices = data.intradayLatestPrices || {};
+  const trendPositions = (data.trendPositions || []).map((p) => ({
+    ticker: p.ticker,
+    shares: Number(p.shares),
+    entryPrice: Number(p.entry_price),
+    peakPrice: Number(p.peak_price),
+    openedAt: p.opened_at,
+  }));
 
   return {
     day: s.day_count || 0,
@@ -125,6 +132,7 @@ async function fetchState(backendUrl) {
     trades,
     history,
     intradayPositions,
+    trendPositions,
     intradayPrices,
     updatedAt: s.updated_at || null,
   };
@@ -336,6 +344,10 @@ export default function TradingDesk() {
       const price = s.intradayPrices[p.ticker] ?? p.entryPrice;
       v += p.shares * price;
     });
+    (s.trendPositions || []).forEach((p) => {
+      const price = s.intradayPrices[p.ticker] ?? p.entryPrice;
+      v += p.shares * price;
+    });
     Object.entries(s.holdings).forEach(([t, h]) => {
       const price = s.prices[t] || h.avgCost;
       v += h.qty * price;
@@ -360,6 +372,13 @@ export default function TradingDesk() {
       market += p.shares * price;
       cost += p.shares * p.entryPrice;
     });
+    if (cls === "crypto") {
+      (s.trendPositions || []).forEach((p) => {
+        const price = s.intradayPrices[p.ticker] ?? p.entryPrice;
+        market += p.shares * price;
+        cost += p.shares * p.entryPrice;
+      });
+    }
     return { market, cost };
   };
 
@@ -584,6 +603,18 @@ export default function TradingDesk() {
         ? (currentPrice - p.entryPrice) / p.entryPrice
         : null;
     return { ...p, currentPrice, pl };
+  });
+  const trendList = (state.trendPositions || []).map((p) => {
+    const currentPrice = state.intradayPrices[p.ticker] ?? null;
+    const pl =
+      currentPrice != null
+    ? (currentPrice - p.entryPrice) / p.entryPrice
+      : null;
+    const fromPeak =
+      currentPrice != null && p.peakPrice
+    ? (currentPrice - p.peakPrice) / p.peakPrice
+      : null;
+    return { ...p, currentPrice, pl, fromPeak };
   });
   // Intraday now trades against the same shared cash_stocks/cash_crypto pool
   // as the daily engine (see Cash in the header breakdown) rather than an
@@ -1341,8 +1372,67 @@ export default function TradingDesk() {
                 );
               })
             )}
-          </div>
-        )}
+            {trendList.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              <div
+                style={{
+                  fontFamily: fontMono,
+                  fontSize: 11,
+                  color: dim,
+                  letterSpacing: 0.5,
+                  marginTop: 4,
+                }}
+                >
+              CRYPTO TREND POSITIONS · 20/60-day trend-following · exits on
+              trend break, 15% trailing stop, or 25% hard stop
+              </div>
+              {trendList.map((p) => (
+              <div
+                key={p.ticker}
+                style={{
+                  background: panel,
+                  borderRadius: 10,
+                  padding: 12,
+                  border: "1px solid #1E293D",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+                >
+              <div>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontFamily: fontMono, fontWeight: 600, fontSize: 14 }}>
+                {p.ticker}
+              </span>
+              <ClsTag cls="crypto" />
+              </div>
+              <div style={{ fontSize: 12, color: dim }}>
+                {p.shares.toFixed(4)} sh @ {usd(p.entryPrice)}
+              </div>
+              <div style={{ fontSize: 11, color: dim, marginTop: 4 }}>
+              opened {timeAgo(p.openedAt)}
+                {p.fromPeak != null ? ` · ${(p.fromPeak * 100).toFixed(1)}% off peak` : ""}
+              </div>
+              </div>
+              <div style={{ textAlign: "right" }}>
+              <div style={{ fontFamily: fontMono, fontSize: 14 }}>
+                {p.currentPrice != null ? usd(p.currentPrice) : "—"}
+              </div>
+              <div
+                style={{
+                  fontFamily: fontMono,
+                  fontSize: 12,
+                  color: p.pl == null ? dim : p.pl >= 0 ? mint : red,
+                }}
+                >
+                {p.pl != null ? pct(p.pl) : "waiting for price"}
+              </div>
+              </div>
+              </div>
+              ))}
+            </div>
+          )}</div>
+          )}
 
         {tab === "intraday" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
