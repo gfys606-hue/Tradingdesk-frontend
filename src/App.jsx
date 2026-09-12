@@ -1791,7 +1791,7 @@ export default function TradingDesk() {
       <EmptyState label="Loading shadow data..." />
     ) : shadowError ? (
       <EmptyState label={`Couldn't load shadow data: ${shadowError}`} />
-    ) : !shadowData || Object.keys(shadowData.engines || {}).length === 0 ? (
+    ) : !shadowData || Object.keys(shadowData.engines || {}).length === 0 && (shadowData.open || []).length === 0 ? (
       <EmptyState label="No shadow rejections logged yet." />
     ) : (
       <>
