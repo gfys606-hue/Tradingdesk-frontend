@@ -24,6 +24,7 @@ import {
   RefreshCw,
   X,
   Activity,
+  Ghost,
 } from "lucide-react";
 
 const CONVICTION_BUY = 72;
@@ -253,6 +254,9 @@ export default function TradingDesk() {
   const [tab, setTab] = useState("scan");
   const [scanError, setScanError] = useState(null);
   const [connError, setConnError] = useState(null);
+  const [shadowData, setShadowData] = useState(null);
+  const [shadowLoading, setShadowLoading] = useState(false);
+  const [shadowError, setShadowError] = useState(null);
   const pollRef = useRef(null);
 
   // live price chart: which ticker is selected, and its accumulated points
@@ -289,6 +293,38 @@ export default function TradingDesk() {
       setLoading(false);
     }
   }, []);
+
+  // shadow tab: fetch on demand rather than on the main poll loop, since this
+  // is historical performance data that changes slowly compared to live prices
+  useEffect(() => {
+    if (!backendUrl || tab !== "shadow") return;
+    let cancelled = false;
+    setShadowLoading(true);
+    fetch(`${backendUrl}/api/desk/shadow?hours=168`)
+    .then(async (res) => {
+      if (!res.ok) {
+        const body = await res.text().catch(() => "");
+        throw new Error(
+          res.status + (body ? `: ${body.slice(0, 150)}` : ""),
+          );
+      }
+      return res.json();
+    })
+    .then((d) => {
+      if (cancelled) return;
+      setShadowData(d);
+      setShadowError(null);
+    })
+    .catch((e) => {
+      if (!cancelled) setShadowError(e.message || "Could not load shadow data");
+    })
+    .finally(() => {
+      if (!cancelled) setShadowLoading(false);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [backendUrl, tab]);
 
   // once we have a backend URL, load state + poll - faster while unreachable
   // (e.g. a free-tier host cold-starting) so the dashboard recovers quickly,
@@ -1173,6 +1209,7 @@ export default function TradingDesk() {
         <TabBtn id="holdings" label="Holdings" icon={Wallet} />
         <TabBtn id="intraday" label="Intraday" icon={Activity} />
         <TabBtn id="log" label="Trade Log" icon={History} />
+        <TabBtn id="shadow" label="Shadow" icon={Ghost} />
       </div>
 
       <div style={{ padding: 14, paddingBottom: 40 }}>
@@ -1744,6 +1781,196 @@ export default function TradingDesk() {
             )}
           </div>
         )}
+{tab === "shadow" && (
+  <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+    <div style={{ fontSize: 11, color: dim, letterSpacing: 0.5 }}>
+      SHADOW TRACKING · tickers each engine skipped for missing its own entry
+      bar, walked forward with that engine's own exit rules
+    </div>
+    {shadowLoading && !shadowData ? (
+      <EmptyState label="Loading shadow data..." />
+    ) : shadowError ? (
+      <EmptyState label={`Couldn't load shadow data: ${shadowError}`} />
+    ) : !shadowData || Object.keys(shadowData.engines || {}).length === 0 ? (
+      <EmptyState label="No shadow rejections logged yet." />
+    ) : (
+      <>
+        {Object.entries(shadowData.engines).map(([engine, stats]) => (
+          <div
+            key={engine}
+            style={{
+              background: panel,
+              borderRadius: 10,
+              padding: 16,
+              border: "1px solid #1E293D",
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <span
+                style={{ fontFamily: fontMono, fontWeight: 600, fontSize: 15 }}
+              >
+                {{ intraday: "Intraday", daily: "Daily", crypto_trend: "Crypto Trend" }[engine] ||
+                  engine}
+              </span>
+              <span style={{ fontSize: 12, color: dim }}>
+                {stats.overall.n} closed shadow trade
+                {stats.overall.n === 1 ? "" : "s"}
+              </span>
+            </div>
+            <div style={{ display: "flex", gap: 24 }}>
+              <div>
+                <div style={{ fontSize: 11, color: dim }}>WIN RATE</div>
+                <div
+                  style={{
+                    fontFamily: fontMono,
+                    fontSize: 18,
+                    color: stats.overall.winRate >= 0.5 ? mint : red,
+                  }}
+                >
+                  {stats.overall.winRate == null
+                    ? "—"
+                    : (stats.overall.winRate * 100).toFixed(0) + "%"}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 11, color: dim }}>AVG P&L</div>
+                <div
+                  style={{
+                    fontFamily: fontMono,
+                    fontSize: 18,
+                    color: stats.overall.avgPctChange >= 0 ? mint : red,
+                  }}
+                >
+                  {pct(stats.overall.avgPctChange)}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {["near_miss", "moderate_miss", "far_miss"].map((bucket) => {
+                const b = stats.byMissDistance ? stats.byMissDistance[bucket] : null;
+                if (!b) return null;
+                const bucketLabel =
+                  bucket === "near_miss"
+                    ? "Near miss"
+                    : bucket === "moderate_miss"
+                      ? "Moderate miss"
+                      : "Far miss";
+                return (
+                  <div
+                    key={bucket}
+                    style={{
+                      background: panel2,
+                      borderRadius: 8,
+                      padding: "8px 12px",
+                      minWidth: 130,
+                    }}
+                  >
+                    <div style={{ fontSize: 10, color: dim, letterSpacing: 0.4 }}>
+                      {bucketLabel} · {b.n}
+                    </div>
+                    <div
+                      style={{
+                        fontFamily: fontMono,
+                        fontSize: 13,
+                        color: b.avgPctChange >= 0 ? mint : red,
+                        marginTop: 2,
+                      }}
+                    >
+                      {pct(b.avgPctChange)} avg · {(b.winRate * 100).toFixed(0)}% win
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            {Object.keys(stats.byExitReason || {}).length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                <div style={{ fontSize: 10, color: dim, letterSpacing: 0.4 }}>
+                  BY EXIT REASON
+                </div>
+                {Object.entries(stats.byExitReason).map(([reason, r]) => (
+                  <div
+                    key={reason}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 12,
+                    }}
+                  >
+                    <span style={{ color: dim }}>{reason}</span>
+                    <span
+                      style={{
+                        fontFamily: fontMono,
+                        color: r.avgPctChange >= 0 ? mint : red,
+                      }}
+                    >
+                      {pct(r.avgPctChange)} · {r.n}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+        <div
+          style={{ fontSize: 11, color: dim, letterSpacing: 0.5, marginTop: 4 }}
+        >
+          OPEN SHADOW WATCHES · {shadowData.openCount}
+        </div>
+        {shadowData.open.length === 0 ? (
+          <EmptyState label="No open shadow watches right now." />
+        ) : (
+          shadowData.open.map((p) => (
+            <div
+              key={p.id}
+              style={{
+                background: panel,
+                borderRadius: 10,
+                padding: 12,
+                border: "1px solid #1E293D",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+              }}
+            >
+              <div>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span
+                    style={{ fontFamily: fontMono, fontWeight: 600, fontSize: 14 }}
+                  >
+                    {p.ticker}
+                  </span>
+                  <ClsTag cls={p.cls} />
+                  <span style={{ fontSize: 11, color: dim }}>
+                    {{ intraday: "Intraday", daily: "Daily", crypto_trend: "Crypto Trend" }[p.engine] ||
+                      p.engine}
+                  </span>
+                </div>
+                <div style={{ fontSize: 12, color: dim, marginTop: 4 }}>
+                  entry {usd(Number(p.entry_price))} · signal{" "}
+                  {Number(p.signal_value).toFixed(3)} vs bar{" "}
+                  {Number(p.signal_threshold).toFixed(3)}
+                </div>
+              </div>
+              <div style={{ fontSize: 11, color: dim }}>
+                {timeAgo(p.opened_at)}
+              </div>
+            </div>
+          ))
+        )}
+      </>
+    )}
+  </div>
+)}
+
       </div>
     </div>
   );
