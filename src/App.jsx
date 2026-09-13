@@ -25,11 +25,12 @@ import {
   X,
   Activity,
   Ghost,
+  Anchor,
 } from "lucide-react";
 
 const CONVICTION_BUY = 72;
 const CONVICTION_SELL = 30;
-const TOTAL_START = 2000; // $1000 stocks + $1000 crypto, seeded by the backend on migrate
+const TOTAL_START = 2600; // $1000 stocks + $1000 crypto (daily/intraday) + $300/$300 long-term pool, seeded by the backend on migrate
 const BACKEND_URL_KEY = "desk-backend-url";
 const POLL_MS = 30000; // pick up server-side cron trades without a manual refresh
 const RETRY_MS = 5000; // retry sooner while unreachable (e.g. a free-tier host waking from sleep)
@@ -116,6 +117,22 @@ async function fetchState(backendUrl) {
     openedAt: p.opened_at,
   }));
 
+  // Long-term conviction holds: stricter-bar buy-and-hold-until-trailing-stop
+  // ledger with its own dedicated cash pool per class. Updated once a day
+  // alongside the daily scan, so current price comes from the same prices
+  // map the daily holdings use, not the intraday tick feed.
+  const longTermPositions = (data.longTermPositions || []).map((p) => ({
+    ticker: p.ticker,
+    name: p.name,
+    cls: p.cls,
+    sector: p.sector,
+    shares: Number(p.shares),
+    entryPrice: Number(p.entry_price),
+    peakPrice: Number(p.peak_price),
+    entryConfidence: p.entry_confidence != null ? Number(p.entry_confidence) : null,
+    openedAt: p.opened_at,
+  }));
+
   return {
     day: s.day_count || 0,
     cash: {
@@ -126,6 +143,10 @@ async function fetchState(backendUrl) {
       stocks: Number(s.intraday_cash_stocks || 0),
       crypto: Number(s.intraday_cash_crypto || 0),
     },
+    longTermCash: {
+      stocks: Number(s.long_term_cash_stocks || 0),
+      crypto: Number(s.long_term_cash_crypto || 0),
+    },
     holdings,
     prices,
     targets,
@@ -134,6 +155,7 @@ async function fetchState(backendUrl) {
     history,
     intradayPositions,
     trendPositions,
+    longTermPositions,
     intradayPrices,
     updatedAt: s.updated_at || null,
   };
@@ -257,6 +279,8 @@ export default function TradingDesk() {
   const [shadowData, setShadowData] = useState(null);
   const [shadowLoading, setShadowLoading] = useState(false);
   const [shadowError, setShadowError] = useState(null);
+  const [sellingTicker, setSellingTicker] = useState(null);
+  const [sellError, setSellError] = useState(null);
   const pollRef = useRef(null);
 
   // live price chart: which ticker is selected, and its accumulated points
@@ -370,18 +394,46 @@ export default function TradingDesk() {
     }
   };
 
+  const sellLongTerm = async (ticker) => {
+    if (!backendUrl || sellingTicker) return;
+    setSellingTicker(ticker);
+    setSellError(null);
+    try {
+      const res = await fetch(`${backendUrl}/api/desk/longterm/sell`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ticker }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || body.ok === false) {
+        throw new Error(body.error || `Sell failed (${res.status})`);
+      }
+      await loadState(backendUrl);
+    } catch (e) {
+      setSellError(e.message || "Sell failed");
+    } finally {
+      setSellingTicker(null);
+    }
+  };
+
   const portfolioValue = (s) => {
     let v =
       s.cash.stocks +
       s.cash.crypto +
       s.intradayCash.stocks +
-      s.intradayCash.crypto;
+      s.intradayCash.crypto +
+      s.longTermCash.stocks +
+      s.longTermCash.crypto;
     (s.intradayPositions || []).forEach((p) => {
       const price = s.intradayPrices[p.ticker] ?? p.entryPrice;
       v += p.shares * price;
     });
     (s.trendPositions || []).forEach((p) => {
       const price = s.intradayPrices[p.ticker] ?? p.entryPrice;
+      v += p.shares * price;
+    });
+    (s.longTermPositions || []).forEach((p) => {
+      const price = s.prices[p.ticker] ?? p.entryPrice;
       v += p.shares * price;
     });
     Object.entries(s.holdings).forEach(([t, h]) => {
@@ -652,6 +704,25 @@ export default function TradingDesk() {
       : null;
     return { ...p, currentPrice, pl, fromPeak };
   });
+  // Long-term positions update once a day alongside the daily scan, so
+  // current price comes from that day's candidates map, not the intraday
+  // tick feed (which only covers intraday's own trading universe).
+  const longTermList = (state.longTermPositions || []).map((p) => {
+    const currentPrice = state.prices[p.ticker] ?? null;
+    const pl =
+      currentPrice != null ? (currentPrice - p.entryPrice) / p.entryPrice : null;
+    const fromPeak =
+      currentPrice != null && p.peakPrice
+        ? (currentPrice - p.peakPrice) / p.peakPrice
+        : null;
+    return { ...p, currentPrice, pl, fromPeak };
+  });
+  const longTermCashTotal =
+    state.longTermCash.stocks + state.longTermCash.crypto;
+  const longTermPositionsValue = longTermList.reduce(
+    (sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice),
+    0,
+  );
   // Intraday now trades against the same shared cash_stocks/cash_crypto pool
   // as the daily engine (see Cash in the header breakdown) rather than an
   // isolated allocation, so this is just the mark-to-market value of
@@ -942,6 +1013,11 @@ export default function TradingDesk() {
         >
           <CashCard label="Cash" value={cashTotal} />
           <CashCard
+            label="Long-term pool"
+            value={longTermCashTotal}
+            sub={`+ ${usd(longTermPositionsValue)} held`}
+          />
+          <CashCard
             label="Costs paid"
             value={usd(costsPaid)}
             color={costsPaid > 0 ? red : dim}
@@ -1208,6 +1284,7 @@ export default function TradingDesk() {
         <TabBtn id="scan" label="Scan" icon={Radar} />
         <TabBtn id="holdings" label="Holdings" icon={Wallet} />
         <TabBtn id="intraday" label="Intraday" icon={Activity} />
+        <TabBtn id="longterm" label="Long Term" icon={Anchor} />
         <TabBtn id="log" label="Trade Log" icon={History} />
         <TabBtn id="shadow" label="Shadow" icon={Ghost} />
       </div>
@@ -1470,6 +1547,128 @@ export default function TradingDesk() {
             </div>
           )}</div>
           )}
+
+        {tab === "longterm" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ display: "flex", gap: 10 }}>
+              <CashCard label="Stocks cash" value={state.longTermCash.stocks} />
+              <CashCard label="Crypto cash" value={state.longTermCash.crypto} />
+            </div>
+            <div
+              style={{
+                fontFamily: fontMono,
+                fontSize: 11,
+                color: dim,
+                letterSpacing: 0.5,
+              }}
+            >
+              LONG-TERM CONVICTION HOLDS - buys from the daily scan at a
+              stricter bar than the daily engine's own buy threshold - holds
+              until a 15% trailing stop from peak, or a manual sell below
+            </div>
+            {sellError && (
+              <div
+                style={{
+                  background: "rgba(196,69,59,0.12)",
+                  border: "1px solid rgba(196,69,59,0.4)",
+                  borderRadius: 8,
+                  padding: "8px 10px",
+                  color: red,
+                  fontSize: 12,
+                  fontFamily: fontUtil,
+                }}
+              >
+                {sellError}
+              </div>
+            )}
+            {longTermList.length === 0 ? (
+              <EmptyState label="No long-term conviction holds yet - these open automatically off the daily scan." />
+            ) : (
+              longTermList.map((p) => {
+                const daysHeld = Math.floor(
+                  (Date.now() - new Date(p.openedAt).getTime()) / 86400000,
+                );
+                return (
+                  <div
+                    key={p.ticker}
+                    style={{
+                      background: panel,
+                      borderRadius: 10,
+                      padding: 12,
+                      border: "1px solid #1E293D",
+                      display: "flex",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      gap: 10,
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                        <span
+                          style={{
+                            fontFamily: fontMono,
+                            fontWeight: 600,
+                            fontSize: 14,
+                          }}
+                        >
+                          {p.ticker}
+                        </span>
+                        <ClsTag cls={p.cls} />
+                      </div>
+                      <div style={{ fontSize: 12, color: dim }}>
+                        {p.shares.toFixed(p.cls === "crypto" ? 4 : 2)} sh @{" "}
+                        {usd(p.entryPrice)}
+                        {p.entryConfidence != null
+                          ? ` - entry confidence ${p.entryConfidence}`
+                          : ""}
+                      </div>
+                      <div style={{ fontSize: 11, color: dim, marginTop: 4 }}>
+                        {daysHeld <= 0 ? "opened today" : `held ${daysHeld}d`}
+                        {p.fromPeak != null
+                          ? ` - ${(p.fromPeak * 100).toFixed(1)}% off peak (${usd(p.peakPrice)})`
+                          : ""}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right", display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+                      <div>
+                        <div style={{ fontFamily: fontMono, fontSize: 14 }}>
+                          {p.currentPrice != null ? usd(p.currentPrice) : "—"}
+                        </div>
+                        <div
+                          style={{
+                            fontFamily: fontMono,
+                            fontSize: 12,
+                            color: p.pl == null ? dim : p.pl >= 0 ? mint : red,
+                          }}
+                        >
+                          {p.pl != null ? pct(p.pl) : "waiting for price"}
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => sellLongTerm(p.ticker)}
+                        disabled={sellingTicker === p.ticker}
+                        style={{
+                          background: "transparent",
+                          color: red,
+                          border: `1px solid ${red}`,
+                          borderRadius: 6,
+                          padding: "5px 10px",
+                          fontFamily: fontUtil,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: sellingTicker === p.ticker ? "default" : "pointer",
+                          opacity: sellingTicker === p.ticker ? 0.5 : 1,
+                        }}
+                      >
+                        {sellingTicker === p.ticker ? "Selling…" : "Sell"}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
 
         {tab === "intraday" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
