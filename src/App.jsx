@@ -731,7 +731,7 @@ export default function TradingDesk() {
     (sum, p) => sum + p.shares * (p.currentPrice ?? p.entryPrice),
     0,
   );
-  const TRADE_SIZE_CLIENT = 250; // mirrors TRADE_SIZE in the backend's intradayEngine.js
+  const TRADE_SIZE_CLIENT = 200; // mirrors TRADE_SIZE in the backend's intradayEngine.js (trimmed 250 -> 200 on 2026-09-16)
   const intradayClosedToday = (state.trades || [])
     .filter(
       (t) =>
@@ -1681,7 +1681,7 @@ export default function TradingDesk() {
                 letterSpacing: 0.5,
               }}
             >
-              $250/trade · shares the swing engine's cash pool · stop-loss at
+              $200/trade · shares the swing engine's cash pool · stop-loss at
               -0.6%, wins lock in at +0.25% and run until price pulls back
               0.1% from its peak · trades every ticker the daily scan tracks ·
               checks every few seconds
