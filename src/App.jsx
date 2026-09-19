@@ -147,6 +147,14 @@ async function fetchState(backendUrl) {
       stocks: Number(s.long_term_cash_stocks || 0),
       crypto: Number(s.long_term_cash_crypto || 0),
     },
+    lifetimeFees: {
+      stocks: Number(s.lifetime_fees_stocks || 0),
+      crypto: Number(s.lifetime_fees_crypto || 0),
+    },
+    lifetimeSlippage: {
+      stocks: Number(s.lifetime_slippage_stocks || 0),
+      crypto: Number(s.lifetime_slippage_crypto || 0),
+    },
     holdings,
     prices,
     targets,
@@ -641,16 +649,16 @@ export default function TradingDesk() {
   const totalValue = portfolioValue(state);
   const totalChange = (totalValue - TOTAL_START) / TOTAL_START;
   const pnlDollars = totalValue - TOTAL_START;
-  // Trading costs the engine has actually charged, over the trade log it
-  // still retains. Slippage is the gap between the observed market price
-  // and the price the fill was modelled at. Trades from before the cost
-  // model contribute nothing, so this is "costs charged", not a forecast.
-  const costsPaid = (state.trades || []).reduce((sum, t) => {
-    const fee = t.fee || 0;
-    const slip =
-      t.fillPrice != null ? Math.abs(t.fillPrice - t.price) * t.qty : 0;
-    return sum + fee + slip;
-  }, 0);
+  // Trading costs the engine has actually charged, tracked as running
+  // lifetime totals on portfolio_state instead of summed from the trade
+  // log (which only retains a limited window of recent rows). Only the
+  // intraday engine charges real fees/slippage today, so these are zero
+  // until it trades.
+  const costsPaid =
+    state.lifetimeFees.stocks +
+    state.lifetimeFees.crypto +
+    state.lifetimeSlippage.stocks +
+    state.lifetimeSlippage.crypto;
   const grossPnlDollars = pnlDollars + costsPaid;
   const cashTotal =
     state.cash.stocks +
