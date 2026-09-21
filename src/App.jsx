@@ -1291,7 +1291,7 @@ export default function TradingDesk() {
       >
         <TabBtn id="scan" label="Scan" icon={Radar} />
         <TabBtn id="holdings" label="Holdings" icon={Wallet} />
-        <TabBtn id="intraday" label="Intraday" icon={Activity} />
+        <TabBtn id="intraday" label="Daily" icon={Activity} />
         <TabBtn id="longterm" label="Long Term" icon={Anchor} />
         <TabBtn id="log" label="Trade Log" icon={History} />
         <TabBtn id="shadow" label="Shadow" icon={Ghost} />
