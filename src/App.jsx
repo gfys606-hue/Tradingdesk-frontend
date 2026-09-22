@@ -26,6 +26,7 @@ import {
   Activity,
   Ghost,
   Anchor,
+  Receipt,
 } from "lucide-react";
 
 const CONVICTION_BUY = 72;
@@ -780,6 +781,26 @@ export default function TradingDesk() {
       ? intradayLossesTotal / (intradayLosses * TRADE_SIZE_CLIENT)
       : null;
 
+  // Per-trade fee/slippage breakdown (Costs tab) - slippage isn't stored
+  // directly but is recoverable from fillPrice vs the observed price for
+  // any trade the cost model priced (see intradayEngine.js's cost model).
+  const costTrades = (state.trades || [])
+    .filter((t) => t.fee != null || t.fillPrice != null)
+    .map((t) => {
+      const slippage =
+        t.fillPrice != null ? Math.abs(t.fillPrice - t.price) * t.qty : null;
+      const fee = t.fee || 0;
+      return { ...t, slippage, totalCost: fee + (slippage || 0) };
+    });
+  const costSummary = costTrades.reduce(
+    (acc, t) => ({
+      fees: acc.fees + (t.fee || 0),
+      slippage: acc.slippage + (t.slippage || 0),
+      count: acc.count + 1,
+    }),
+    { fees: 0, slippage: 0, count: 0 },
+  );
+
   const candles = buildCandles(chartData, 20);
   const intradayTradeMarkers = (state.trades || [])
     .filter(
@@ -1293,6 +1314,7 @@ export default function TradingDesk() {
         <TabBtn id="holdings" label="Holdings" icon={Wallet} />
         <TabBtn id="intraday" label="Daily" icon={Activity} />
         <TabBtn id="longterm" label="Long Term" icon={Anchor} />
+        <TabBtn id="costs" label="Costs" icon={Receipt} />
         <TabBtn id="log" label="Trade Log" icon={History} />
         <TabBtn id="shadow" label="Shadow" icon={Ghost} />
       </div>
@@ -1924,6 +1946,120 @@ export default function TradingDesk() {
                   </div>
                 ))}
               </div>
+            )}
+          </div>
+        )}
+
+        {tab === "costs" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div
+              style={{
+                fontFamily: fontMono,
+                fontSize: 11,
+                color: dim,
+                marginBottom: 2,
+                letterSpacing: 0.5,
+              }}
+            >
+              FEE + SLIPPAGE PER TRADE · only trades the cost model has
+              priced show a breakdown here (currently just the intraday
+              engine) · trade log keeps the most recent rows, so totals
+              here can undercount vs. the lifetime Costs paid figure above
+            </div>
+            {costSummary.count === 0 ? (
+              <EmptyState label="No cost-tracked trades yet." />
+            ) : (
+              <>
+                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                  <CashCard
+                    label="Total fees"
+                    value={usd(costSummary.fees)}
+                    color={costSummary.fees > 0 ? red : dim}
+                  />
+                  <CashCard
+                    label="Total slippage"
+                    value={usd(costSummary.slippage)}
+                    color={costSummary.slippage > 0 ? red : dim}
+                  />
+                  <CashCard
+                    label="Total cost"
+                    value={usd(costSummary.fees + costSummary.slippage)}
+                    color={red}
+                    sub={`${costSummary.count} trade${costSummary.count === 1 ? "" : "s"}`}
+                  />
+                </div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {costTrades.map((t, i) => (
+                    <div
+                      key={i}
+                      style={{
+                        background: panel,
+                        borderRadius: 10,
+                        padding: 12,
+                        border: "1px solid #1E293D",
+                      }}
+                    >
+                      <div
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span
+                            style={{
+                              fontFamily: fontMono,
+                              fontSize: 11,
+                              fontWeight: 700,
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              background:
+                                t.action === "BUY"
+                                  ? "rgba(79,174,140,0.15)"
+                                  : "rgba(196,69,59,0.15)",
+                              color: t.action === "BUY" ? mint : red,
+                            }}
+                          >
+                            {t.action}
+                          </span>
+                          <span style={{ fontFamily: fontMono, fontSize: 13 }}>
+                            {t.ticker}
+                          </span>
+                          <ClsTag cls={t.cls} />
+                          {t.createdAt && (
+                            <span style={{ fontFamily: fontMono, fontSize: 11, color: dim }}>
+                              {timeAgo(t.createdAt)}
+                            </span>
+                          )}
+                        </div>
+                        <div style={{ fontFamily: fontMono, fontSize: 13, color: red }}>
+                          -{usd(t.totalCost)}
+                        </div>
+                      </div>
+                      <div
+                        style={{
+                          marginTop: 6,
+                          display: "flex",
+                          gap: 14,
+                          flexWrap: "wrap",
+                          fontSize: 11,
+                          color: dim,
+                          fontFamily: fontMono,
+                        }}
+                      >
+                        <span>
+                          {t.qty.toFixed(t.cls === "crypto" ? 4 : 2)} sh @ {usd(t.price)}
+                        </span>
+                        {t.fillPrice != null && <span>filled {usd(t.fillPrice)}</span>}
+                        <span>fee {t.fee != null ? usd(t.fee) : "—"}</span>
+                        <span>slippage {t.slippage != null ? usd(t.slippage) : "—"}</span>
+                        {t.reason && <span style={{ color: "#5A6478" }}>{t.reason}</span>}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
             )}
           </div>
         )}
