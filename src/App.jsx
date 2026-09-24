@@ -741,11 +741,12 @@ export default function TradingDesk() {
     0,
   );
   const TRADE_SIZE_CLIENT = 200; // mirrors TRADE_SIZE in the backend's intradayEngine.js (trimmed 250 -> 200 on 2026-09-16)
-  const intradayClosedToday = (state.trades || [])
-    .filter(
+  const toNYDateString = (d) =>    new Date(d).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+const intradayClosedToday = (state.trades || [])
+  .filter(
       (t) =>
         t.createdAt &&
-        new Date(t.createdAt).toDateString() === new Date().toDateString() &&
+        toNYDateString(t.createdAt) === toNYDateString(new Date()) &&
         t.action === "SELL" &&
         (t.reason || "").startsWith("intraday "),
     )
